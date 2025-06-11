@@ -1,89 +1,83 @@
 # Pixel Perfecter
 
-A Python tool for automatically extracting and reconstructing pixel art assets from images. It uses advanced image processing techniques to detect the original pixel scale and segment the artwork into its constituent pixels.
+This repository is an active research and development log focused on converting AI-generated pseudo–pixel art into true, grid-aligned pixel art. It documents a series of algorithmic and manual experiments to reverse-engineer logical sprite grids from noisy, diffusion-based image outputs.
 
-## Features
+This is not a polished tool. It is a structured workspace for prototyping solutions, gathering insights, and producing material for blog posts, interviews, and portfolio documentation.
 
-- Automatic pixel scale detection using FFT (Fast Fourier Transform) analysis
-- Smart pixel segmentation using watershed or k-means algorithms
-- Support for processing sprite sheets with multiple assets
-- Automatic reconstruction of pixel art at the original scale
-- Debug visualizations for each processing step
+---
 
-## How It Works
+## Objective
 
-### Scale Detection
+Many AI-generated "pixel art" images suggest grid-like structure but lack true alignment or discrete pixel regions. This project aims to recover or reconstruct that structure through:
 
-The tool uses FFT analysis to detect the original pixel scale of the artwork:
+- Visual block size detection (e.g. modal run-length histograms)
+- Grid offset optimization (to find true origin of implied tiles)
+- Block snapping using mode color per region
+- Diagnostic image diffs and structure validation tools
+- Dataset generation and CNN model training (planned)
 
-1. Converts image to grayscale and applies light Gaussian blur to reduce noise
-2. Performs 2D FFT and analyzes the frequency spectrum
-3. Detects frequency peaks corresponding to pixel grid patterns
-4. Uses harmonic analysis to identify the fundamental scale from frequency peaks
-5. Validates and refines the scale estimate
+---
 
-### Segmentation
+## Repository Structure
 
-Two segmentation methods are supported:
-
-- **Watershed** (Default): Uses morphological operations and watershed segmentation
-- **K-means**: Uses color-based clustering for segmentation
-
-### Reconstruction
-
-The tool reconstructs the pixel art by:
-
-1. Calculating the average color for each detected segment
-2. Determining the grid position for each segment
-3. Reconstructing the final image at the detected scale
-4. Applying post-processing to fill any gaps
-
-## Installation
-
-1. Clone the repository:
-```bash
-git clone https://github.com/alexkorol/pixel-perfecter.git
-cd pixel-perfecter
+```plaintext
+pixel-perfecter/
+├── src/                  # All current scripts, experiments, and tooling
+├── notes/                # Development journal, findings, failures, ideas
+├── tests/                # Planned input/output test assets, CNN evaluations
+├── legacy_attempt/       # Archived older tools and failed pipelines
+├── README.md             # This file
+└── requirements.txt      # Dependencies for all tools
 ```
 
-2. Install requirements:
-```bash
-pip install -r requirements.txt
-```
+---
 
-## Usage
+## Project Philosophy
 
-1. Place your pixel art image in the `input` folder
+* Manual verification is the ground truth. Visual alignment beats numeric guesswork.
+* Diffusion artifacts must be interpreted structurally, not just semantically.
+* Broken experiments are just as valuable as successful ones—everything gets logged.
+* This repo doubles as a workspace and documentation hub for future use and sharing.
 
-2. Run the tool:
-```bash
-python src/main.py
-```
+---
 
-3. You'll be prompted for:
-   - Segmentation method (watershed/kmeans)
-   - Whether to use automatic scale detection
-   - Number of rows/columns if processing a sprite sheet
+## Notes System
 
-4. Processed images will be saved in the `output` folder
+All key work is tracked in `/notes/`. Each file serves a focused role:
 
-### Debug Output
+* `logbook.md` – chronological dev notes and daily/weekly check-ins
+* `experiments.md` – detailed summaries of code runs, tests, variations
+* `findings.md` – working truths: things that are known to work or be reliable
+* `failures.md` – approaches that didn't work and why
+* `insights.md` – broader observations or design-level conclusions
+* `wishlist.md` – tooling, experiments, or features to build later
 
-Set `debug_dir` in the code to enable debug visualizations for each processing step, including:
-- FFT magnitude spectrum
-- Segmentation steps
-- Grid detection
-- Final reconstruction
+This system prioritizes clarity, traceability, and reuse.
 
-## Requirements
+---
 
-See `requirements.txt` for detailed dependencies. Main requirements:
-- Python 3.8+
-- NumPy
-- OpenCV
-- scikit-image
-- PIL/Pillow
+## Scripts and Tooling
+
+As the project evolves, the following will be developed in `src/`:
+
+* Grid block detectors using histograms and offset scorers
+* Color snapping and sprite extraction tools
+* Sprite visualizers and diff tools
+* Dataset generators for CNN training
+* Lightweight training scaffolds for grid inference models
+
+No single monolithic solution is assumed—tools will be modular and task-specific.
+
+---
+
+## Current Status
+
+This repository was repurposed in June 2025. Earlier tools based on FFT and heuristic segmentation have been moved to `/legacy_attempt/`.
+
+The current version is focused on visual grid alignment, mode-color block snapping, and prepping for CNN-based experiments. Scripts are experimental, not yet production-grade.
+
+---
 
 ## License
 
-MIT License - See LICENSE file for details
+MIT License — see `LICENSE` for details.
