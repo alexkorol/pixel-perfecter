@@ -25,7 +25,7 @@ After snapping the colors to the grid, the next challenge was dealing with small
 
 ## Summary: The Most Valuable Tests
 
-From your development process, the two most powerful and conclusive tests that evolved were:
+So far in the development process, the two most powerful and conclusive tests that evolved were:
 
 1. **Edge-Projection Peak Analysis:** This was the breakthrough for accurately *detecting* the non-uniform grid dimensions without making false assumptions about a fixed `cell_size`.
 2. **High-Resolution Difference Overlay:** This was the breakthrough for objectively *verifying* the final output, moving beyond subjective "it looks wrong" to a precise, data-driven check that could pinpoint the location and nature of any remaining artifacts.
