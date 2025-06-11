@@ -14,7 +14,7 @@ import os
 import sys
 
 # Add src to path
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'src'))
+sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
 
 from grid_tests import GridDetectionTests, ArtifactTests, run_comprehensive_grid_analysis
 
