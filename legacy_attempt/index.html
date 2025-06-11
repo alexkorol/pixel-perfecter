@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pixel Perfecter Web UI</title>
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+    <div class="container">
+        <h1>Pixel Perfecter</h1>
+        <p>Upload an image to convert it to pixel-perfect art</p>
+
+        <form id="uploadForm" enctype="multipart/form-data">
+            <div class="form-group">
+                <label for="spriteUpload">Image File:</label>
+                <input type="file" id="spriteUpload" name="file" accept="image/*" required>
+            </div>
+
+            <div class="form-group">
+                <label for="segmentationMethod">Segmentation Method:</label>
+                <select id="segmentationMethod" name="method">
+                    <option value="watershed">Watershed</option>
+                    <option value="kmeans">K-Means</option>
+                    <option value="pixel_perfecter" selected>Pixel Perfecter (Improved)</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label>
+                    <input type="checkbox" id="autoScale" name="auto_scale" checked>
+                    Auto-detect pixel scale
+                </label>
+            </div>
+
+            <div class="form-group" id="manualScaleGroup" style="display: none;">
+                <label for="manualScale">Manual Pixel Scale:</label>
+                <input type="number" id="manualScale" name="manual_scale" min="1" value="8">
+            </div>
+
+            <div class="form-group">
+                <label for="rows">Rows in spritesheet:</label>
+                <input type="number" id="rows" name="rows" min="1" value="2">
+            </div>
+
+            <div class="form-group">
+                <label for="cols">Columns in spritesheet:</label>
+                <input type="number" id="cols" name="cols" min="1" value="2">
+            </div>
+
+            <div class="form-group">
+                <label for="num_colors">Number of Colors:</label>
+                <input type="number" id="num_colors" name="num_colors" min="2" max="256" value="16">
+            </div>
+
+            <div class="form-group">
+                <label for="blur_size">Median Blur Size (odd number, 0 to disable):</label>
+                <input type="number" id="blur_size" name="blur_size" min="0" step="1" value="5">
+                <small>Must be 0 (disabled) or a positive odd number (1, 3, 5, etc.)</small>
+                <div class="warning" style="color: #d9534f; margin-top: 5px;">
+                    <strong>Warning:</strong> Setting blur size to 0 may result in poor quality output.
+                    For best results, use values between 3-9 depending on image complexity.
+                </div>
+            </div>
+
+            <button type="submit" id="generateBtn">Generate</button>
+        </form>
+
+        <div class="preview-container">
+            <h2>Preview</h2>
+            <div class="image-container">
+                <img id="originalPreview" src="#" alt="Original image preview" style="display: none;">
+                <img id="resultPreview" src="#" alt="Result image preview" style="display: none;">
+            </div>
+        </div>
+
+        <div id="statusText"></div>
+        <a id="downloadLink" href="#" download style="display: none;">Download Result</a>
+    </div>
+
+    <script src="/static/script.js"></script>
+</body>
+</html>
