@@ -48,3 +48,7 @@ set up image viewer tool with resample for zooming (non-blurry zoom) for better 
 Sonnet 4 still goes off the rails. Assumes that because script runs without errors the outputs are good. Makes a premature "final_status.md" file. Switching to GPT-4.1 to see if it's possible to stay more on track. 
 
 GPT 4.1 keeps asking too many unnecessary questions (stalling) instead of working agentically and independently. 
+
+## 2025-06-11 - Evening
+
+**Switched to Roo Code in VS Code and saw immediate results** Roo Code in boomerang mode using sonnet 3.7 was able to correctly iterate on the problem and get the project to a point where all 4 of my initial test input images converted to pixel art successfully. This was a major gamechanger and a milestone in the project. 

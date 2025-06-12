@@ -41,12 +41,16 @@ pixel-perfecter/
 
 ---
 
+## Challenges
+
+* AI-generated pixel art often looks like good pixel art zoomed out but actually has non-uniform grids, misaligned stray pixels, irregular relationship between wigth and height of grid or individual blocks etc. This becomes problematic when trying to brute force a solution with AI-assisted coding as the AI tends to assume regular grid, perfect alignments and so one. 
+* Another challenge is that the AI tends to assume success when the scripts run without console errors, but is unable to check the output visually for adherence to the desired goal. This can become pretty hilarious with the agentic AI creating self-congratulatory 'Mission Accomplished!' md files and scripts while the output is total garbage. 
+
 ## Notes System
 
 All key work is tracked in `/notes/`. Each file serves a focused role:
 
 * `logbook.md` – chronological dev notes and daily/weekly check-ins
-* `experiments.md` – detailed summaries of code runs, tests, variations
 * `findings.md` – working truths: things that are known to work or be reliable
 * `failures.md` – approaches that didn't work and why
 * `insights.md` – broader observations or design-level conclusions
