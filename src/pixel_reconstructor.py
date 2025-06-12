@@ -1,476 +1,734 @@
-#!/usr/bin/env python3
 """
-Pixel Art Reconstruction Module
+Unified Pixel Art Reconstruction Pipeline
 
-Takes an AI-generated pseudo-pixel art image and reconstructs it into 
-true 1:1 pixel art using a unified three-step pipeline.
+This module contains the consolidated, optimized pixel art reconstruction logic.
 """
 
 import numpy as np
-from PIL import Image
 import cv2
-from scipy import stats
-from scipy.signal import find_peaks
-from collections import Counter
+from PIL import Image
+from pathlib import Path
 from typing import Tuple, Optional
+import os
 
 
 class PixelArtReconstructor:
+    def debug_grid_detection(self, save_dir=None):
+        """
+        Save debug plots of edge projections and autocorrelations for this image.
+        """
+        import matplotlib.pyplot as plt
+        import os
+        gray = cv2.cvtColor(self.image, cv2.COLOR_RGB2GRAY)
+        edges = cv2.Canny(cv2.GaussianBlur(gray, (3, 3), 0), 50, 150)
+        h_proj = np.sum(edges, axis=0)
+        v_proj = np.sum(edges, axis=1)
+        h_autocorr = np.correlate(h_proj, h_proj, mode='full')[len(h_proj)-1:]
+        v_autocorr = np.correlate(v_proj, v_proj, mode='full')[len(v_proj)-1:]
+        # Plot
+        fig, axs = plt.subplots(2, 2, figsize=(10, 6))
+        axs[0, 0].plot(h_proj)
+        axs[0, 0].set_title('Horizontal Edge Projection')
+        axs[0, 1].plot(h_autocorr)
+        axs[0, 1].set_title('Horizontal Autocorrelation')
+        axs[1, 0].plot(v_proj)
+        axs[1, 0].set_title('Vertical Edge Projection')
+        axs[1, 1].plot(v_autocorr)
+        axs[1, 1].set_title('Vertical Autocorrelation')
+        fig.suptitle(f'Grid Debug: {os.path.basename(self.image_path)}')
+        fig.tight_layout()
+        if save_dir:
+            os.makedirs(save_dir, exist_ok=True)
+            plot_path = os.path.join(save_dir, os.path.basename(self.image_path) + '_grid_debug.png')
+            plt.savefig(plot_path)
+            plt.close(fig)
+        else:
+            plt.show()
+
     """
-    Unified pixel art reconstruction pipeline.
+    Consolidated pixel art reconstruction pipeline.
     
-    Implements a robust three-step process:
-    1. Detect grid parameters using edge projection and intra-block variance
-    2. Snap to grid using modal color per cell
-    3. Refine artifacts with neighbor majority vote
+    Implements a three-step process:
+    1. Grid parameter detection using edge projection and intra-block variance
+    2. Grid snapping using modal color within each cell
+    3. Artifact refinement using neighbor majority vote
     """
     
-    def __init__(self, image: np.ndarray):
+    def __init__(self, image_path: str, debug=False):
         """
         Initialize with input image.
         
         Args:
-            image: Input image as numpy array (H, W, 3) in RGB format
+            image_path: Path to input image file
+            debug: Enable debug logging
         """
-        self.original = image
-        self.height, self.width = image.shape[:2]
-        self.gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY) if len(image.shape) == 3 else image
-        
-        # Pipeline results
+        self.image_path = image_path
+        self.image = None
         self.cell_size = None
         self.offset = None
-        self.pixel_art = None
-    
+        self.grid_result = None
+        self.debug = debug
+        
     def run(self) -> np.ndarray:
         """
-        Execute the complete reconstruction pipeline.
-        
+        Execute the grid detection and empirical pixel art reconstruction pipeline.
         Returns:
-            Reconstructed pixel art as numpy array
+            Reconstructed pixel art image (empirically determined grid)
         """
-        # Step 1: Detect grid parameters
+        print(f"Processing {self.image_path}")
+        self.image = self._load_image()
+        if self.image is None:
+            raise ValueError(f"Could not load image: {self.image_path}")
+
+        print("Step 1: Detecting grid parameters (edge-projection peak analysis)...")
         self.cell_size, self.offset = self._detect_grid_parameters()
+        print(f"  Detected cell size: {self.cell_size}, offset: {self.offset}")
+
+        print("Step 2: Empirical pixel art reconstruction...")
+        reconstructed = self._empirical_pixel_reconstruction()
+        print("Done!")
+        return reconstructed
+
+    def _empirical_pixel_reconstruction(self) -> np.ndarray:
+        """
+        Reconstructs the image by mapping each detected grid cell to a single output pixel (modal color).
+        Returns:
+            Pixel art image of shape (num_cells_y, num_cells_x, 3)
+        """
+        height, width, channels = self.image.shape
+        x_offset, y_offset = self.offset
+        cell_size = self.cell_size
+
+        # Compute number of cells in each direction
+        num_cells_x = (width - x_offset) // cell_size
+        num_cells_y = (height - y_offset) // cell_size
+
+        out_img = np.zeros((num_cells_y, num_cells_x, 3), dtype=np.uint8)
+
+        for i in range(num_cells_y):
+            for j in range(num_cells_x):
+                y0 = y_offset + i * cell_size
+                x0 = x_offset + j * cell_size
+                y1 = min(y0 + cell_size, height)
+                x1 = min(x0 + cell_size, width)
+                cell = self.image[y0:y1, x0:x1]
+                if cell.size > 0:
+                    modal_color = self._find_modal_color(cell)
+                    out_img[i, j] = modal_color
+        return out_img
         
-        # Step 2: Snap to grid using modal colors
-        self.pixel_art = self._snap_to_grid()
-        
-        # Step 3: Refine artifacts using neighbor majority vote
-        self.pixel_art = self._refine_artifacts()
-        
-        return self.pixel_art
-    
+    def _load_image(self) -> Optional[np.ndarray]:
+        """Load and convert image to RGB numpy array."""
+        try:
+            with Image.open(self.image_path) as img:
+                if img.mode != 'RGB':
+                    img = img.convert('RGB')
+                return np.array(img)
+        except Exception as e:
+            print(f"Error loading image: {e}")
+            return None
+            
     def _detect_grid_parameters(self) -> Tuple[int, Tuple[int, int]]:
         """
-        Step 1: Detect grid cell size and offset using edge projection and variance analysis.
+        Detect grid cell size and offset using edge projection analysis.
         
         Returns:
-            (cell_size, (x_offset, y_offset))
+            Tuple of (cell_size, (x_offset, y_offset))
         """
-        # First try edge projection peak analysis (most robust)
-        cell_size_from_edges = self._edge_projection_analysis()
+        # Convert to grayscale for edge detection
+        gray = cv2.cvtColor(self.image, cv2.COLOR_RGB2GRAY)
         
-        if cell_size_from_edges > 0:
-            # Use edge projection result and find best offset
-            best_offset = self._find_best_offset(cell_size_from_edges)
-            return cell_size_from_edges, best_offset
+        # Apply Gaussian blur to reduce noise
+        blurred = cv2.GaussianBlur(gray, (3, 3), 0)
         
-        # Fallback: test candidate sizes with variance analysis
-        candidates = [8, 16, 24, 32, 48, 64]
-        best_cell_size = None
-        best_variance = float('inf')
-        best_offset = (0, 0)
+        # Detect edges using Canny
+        edges = cv2.Canny(blurred, 50, 150)
         
-        for cell_size in candidates:
-            # Find best offset for this cell size
-            offset = self._find_best_offset(cell_size)
-            variance = self._intra_block_variance(cell_size, offset)
-            
-            if variance < best_variance:
-                best_variance = variance
-                best_cell_size = cell_size
-                best_offset = offset
+        # Find dominant cell size using projection analysis
+        cell_size = self._find_dominant_period(edges)
         
-        return best_cell_size, best_offset
-    
-    def _edge_projection_analysis(self) -> int:
+        # Find best offset for this cell size
+        offset = self._find_best_offset(edges, cell_size)
+        
+        return cell_size, offset
+        
+    def _find_dominant_period(self, edges: np.ndarray) -> int:
         """
-        Find cell size using edge projection and peak spacing analysis.
-        
-        Returns:
-            Cell size, or 0 if detection failed
-        """
-        # Edge detection
-        edges = cv2.Canny(self.gray, 50, 100)
-        
-        # Create projections by summing edges along each axis
-        horizontal_projection = np.sum(edges, axis=0)  # Sum along rows -> column peaks
-        vertical_projection = np.sum(edges, axis=1)    # Sum along columns -> row peaks
-        
-        def find_modal_spacing(projection: np.ndarray) -> int:
-            """Find the most common spacing between peaks."""
-            # Find peaks in projection
-            peaks, _ = find_peaks(projection, height=np.max(projection) * 0.1)
-            
-            if len(peaks) < 2:
-                return 0
-                
-            # Calculate spacings between consecutive peaks
-            spacings = np.diff(peaks)
-            
-            if len(spacings) == 0:
-                return 0
-                
-            # Find most common spacing
-            spacing_counts = Counter(spacings)
-            modal_spacing = spacing_counts.most_common(1)[0][0]
-            
-            return modal_spacing
-        
-        h_cell_size = find_modal_spacing(horizontal_projection)
-        v_cell_size = find_modal_spacing(vertical_projection)
-        
-        # Return consistent size, or 0 if inconsistent
-        if h_cell_size > 0 and v_cell_size > 0:
-            if h_cell_size == v_cell_size:
-                return h_cell_size
-            else:
-                # Use the smaller one as conservative choice
-                return min(h_cell_size, v_cell_size)
-        elif h_cell_size > 0:
-            return h_cell_size
-        elif v_cell_size > 0:
-            return v_cell_size
-        else:
-            return 0
-    
-    def _find_best_offset(self, cell_size: int) -> Tuple[int, int]:
-        """
-        Find optimal grid offset using boundary edge scoring.
+        Find dominant repeating pattern in edge projections.
         
         Args:
-            cell_size: Grid cell size
+            edges: Binary edge image
             
         Returns:
-            (x_offset, y_offset) with best boundary alignment
+            Estimated cell size in pixels
         """
-        best_score = -1
+        height, width = edges.shape
+        
+        # Project edges onto both axes
+        h_projection = np.sum(edges, axis=0)  # Vertical edges
+        v_projection = np.sum(edges, axis=1)  # Horizontal edges
+        
+        if self.debug:
+            print(f"DEBUG: Image dimensions: {width}x{height}")
+            print(f"DEBUG: Edge projection sums - Horizontal: {np.sum(h_projection)}, Vertical: {np.sum(v_projection)}")
+        
+        # Find periods in projections using improved autocorrelation
+        h_periods, h_strengths = self._find_period_autocorr(h_projection, "horizontal")
+        v_periods, v_strengths = self._find_period_autocorr(v_projection, "vertical")
+        
+        if self.debug:
+            print(f"DEBUG: Horizontal periods and strengths: {list(zip(h_periods, h_strengths))}")
+            print(f"DEBUG: Vertical periods and strengths: {list(zip(v_periods, v_strengths))}")
+        
+        # Combine and analyze periods from both axes
+        selected_period = self._select_best_period(h_periods, h_strengths, v_periods, v_strengths, width, height)
+        
+        if selected_period > 0:
+            if self.debug:
+                print(f"DEBUG: Selected period: {selected_period}")
+            return selected_period
+        else:
+            # Fallback: try variance-based detection
+            if self.debug:
+                print("DEBUG: No valid periods found, falling back to variance-based detection")
+            return self._detect_cell_size_variance()
+            
+    def _select_best_period(self, h_periods, h_strengths, v_periods, v_strengths, width, height):
+        """
+        Select the best period from horizontal and vertical candidates using multiple criteria.
+        
+        Args:
+            h_periods: List of horizontal period candidates
+            h_strengths: Strengths of horizontal period candidates
+            v_periods: List of vertical period candidates
+            v_strengths: Strengths of vertical period candidates
+            width: Image width
+            height: Image height
+            
+        Returns:
+            Best period estimate
+        """
+        max_test_size = min(64, width//4, height//4)
+        min_test_size = 4
+        
+        # Filter periods to reasonable range
+        h_valid = [(p, s) for p, s in zip(h_periods, h_strengths) if min_test_size <= p <= max_test_size]
+        v_valid = [(p, s) for p, s in zip(v_periods, v_strengths) if min_test_size <= p <= max_test_size]
+        
+        if self.debug:
+            print(f"DEBUG: Valid horizontal periods: {h_valid}")
+            print(f"DEBUG: Valid vertical periods: {v_valid}")
+        
+        # If no valid periods, return 0 to trigger fallback
+        if not h_valid and not v_valid:
+            return 0
+            
+        # Check for common periods between horizontal and vertical (high confidence)
+        common_periods = set([p for p, _ in h_valid]).intersection([p for p, _ in v_valid])
+        if common_periods:
+            # If multiple common periods, prefer the one with highest combined strength
+            if len(common_periods) > 1:
+                best_common = 0
+                best_strength = 0
+                for p in common_periods:
+                    h_strength = next((s for period, s in h_valid if period == p), 0)
+                    v_strength = next((s for period, s in v_valid if period == p), 0)
+                    combined = h_strength + v_strength
+                    if combined > best_strength:
+                        best_strength = combined
+                        best_common = p
+                if self.debug:
+                    print(f"DEBUG: Selected common period with highest strength: {best_common}")
+                return best_common
+            else:
+                # Single common period
+                common_period = list(common_periods)[0]
+                if self.debug:
+                    print(f"DEBUG: Found common period: {common_period}")
+                return common_period
+                
+        # No common periods, use the strongest period from either axis
+        all_valid = h_valid + v_valid
+        if all_valid:
+            # Sort by strength (descending)
+            sorted_periods = sorted(all_valid, key=lambda x: x[1], reverse=True)
+            best_period = sorted_periods[0][0]
+            
+            # Check for harmonic relationships
+            harmonics = self._check_harmonics(sorted_periods)
+            if harmonics and self.debug:
+                print(f"DEBUG: Detected harmonic relationship: {harmonics}")
+                
+            # If we found harmonics, use the fundamental period
+            if harmonics:
+                best_period = harmonics[0]
+                
+            if self.debug:
+                print(f"DEBUG: Selected strongest period: {best_period}")
+            return best_period
+            
+        # Shouldn't reach here, but just in case
+        return 0
+        
+    def _check_harmonics(self, periods):
+        """
+        Check if the detected periods form harmonic relationships.
+        
+        Args:
+            periods: List of (period, strength) tuples
+            
+        Returns:
+            List of periods in harmonic relationship, or None
+        """
+        if len(periods) < 2:
+            return None
+            
+        # Extract just the periods
+        period_values = [p for p, _ in periods]
+        
+        # Check for common divisors or multiples
+        for i, p1 in enumerate(period_values):
+            harmonics = []
+            for p2 in period_values:
+                # Check if p2 is approximately a multiple of p1
+                if p2 > p1 and abs(p2 % p1) < 2:  # Allow small error
+                    harmonics.append(p2)
+                    
+            if harmonics:
+                # Found harmonic relationship
+                return [p1] + harmonics
+                
+        return None
+            
+    def _find_period_autocorr(self, signal: np.ndarray, direction: str = ""):
+        """
+        Find dominant periods in 1D signal using autocorrelation.
+        
+        Args:
+            signal: 1D signal array
+            direction: Direction label for debug output ("horizontal" or "vertical")
+            
+        Returns:
+            Tuple of (periods, strengths) - lists of period candidates and their strengths
+        """
+        if len(signal) < 8:
+            if self.debug:
+                print(f"DEBUG: {direction} signal too short (<8), returning empty results")
+            return [], []  # Signal too short
+            
+        # Compute autocorrelation
+        correlation = np.correlate(signal, signal, mode='full')
+        correlation = correlation[len(correlation)//2:]
+        
+        if self.debug:
+            print(f"DEBUG: {direction} autocorrelation shape: {correlation.shape}")
+            print(f"DEBUG: {direction} autocorrelation[0] (zero lag): {correlation[0]}")
+            # Print a few key correlation values
+            sample_lags = [4, 8, 16, 32]
+            sample_lags = [lag for lag in sample_lags if lag < len(correlation)]
+            for lag in sample_lags:
+                if lag < len(correlation):
+                    ratio = correlation[lag] / correlation[0] if correlation[0] > 0 else 0
+                    print(f"DEBUG: {direction} autocorrelation at lag {lag}: {correlation[lag]} (ratio to zero lag: {ratio:.3f})")
+        
+        # Find all peaks in autocorrelation
+        peak_periods = []
+        peak_strengths = []
+        
+        # Use a lower threshold to capture more potential peaks
+        threshold = 0.4  # Lower threshold to capture more potential peaks
+        
+        # Minimum peak distance (to avoid detecting very close peaks)
+        min_peak_distance = 3
+        
+        # Find all peaks
+        for lag in range(4, min(len(correlation), len(signal)//4)):
+            # Check if this point is a local maximum
+            is_peak = (lag > 0 and correlation[lag] > correlation[lag-1] and
+                      lag < len(correlation)-1 and correlation[lag] > correlation[lag+1])
+            
+            if is_peak:
+                # Calculate strength as ratio to zero lag
+                strength = correlation[lag] / correlation[0] if correlation[0] > 0 else 0
+                
+                # Only consider peaks above threshold
+                if strength > threshold:
+                    # Check if this peak is far enough from previously detected peaks
+                    if not peak_periods or min(abs(lag - p) for p in peak_periods) >= min_peak_distance:
+                        peak_periods.append(lag)
+                        peak_strengths.append(strength)
+                        
+                        if self.debug:
+                            print(f"DEBUG: {direction} Found peak at lag {lag} with strength {strength:.3f}")
+        
+        if self.debug:
+            if peak_periods:
+                print(f"DEBUG: {direction} All peaks found: {list(zip(peak_periods, peak_strengths))}")
+            else:
+                print(f"DEBUG: {direction} No peaks found")
+                
+        return peak_periods, peak_strengths
+        
+    def _detect_cell_size_variance(self) -> int:
+        """
+        Improved fallback method: detect cell size using intra-block variance.
+        
+        Returns:
+            Estimated cell size
+        """
+        gray = cv2.cvtColor(self.image, cv2.COLOR_RGB2GRAY)
+        height, width = gray.shape
+        
+        # Test cell sizes from 4 to min(64, width//4, height//4)
+        max_test_size = min(64, width//4, height//4)
+        
+        if self.debug:
+            print(f"DEBUG: Variance-based detection testing sizes from 4 to {max_test_size}")
+            
+        variance_results = []
+        
+        for size in range(4, max_test_size + 1):
+            total_variance = 0
+            block_count = 0
+            
+            # Sample blocks across the image
+            for y in range(0, height - size, size):
+                for x in range(0, width - size, size):
+                    block = gray[y:y+size, x:x+size]
+                    variance = np.var(block)
+                    total_variance += variance
+                    block_count += 1
+                    
+            if block_count > 0:
+                avg_variance = total_variance / block_count
+                variance_results.append((size, avg_variance))
+        
+        if not variance_results:
+            if self.debug:
+                print("DEBUG: No variance results, returning default size 8")
+            return 8
+            
+        # Sort by variance (ascending)
+        sorted_results = sorted(variance_results, key=lambda x: x[1])
+        
+        if self.debug:
+            print(f"DEBUG: Top 5 lowest variance cell sizes:")
+            for i, (size, variance) in enumerate(sorted_results[:5]):
+                print(f"DEBUG:   #{i+1}: Size {size} - Variance: {variance:.2f}")
+        
+        # Look for significant drops in variance
+        variance_drops = []
+        for i in range(1, len(sorted_results)):
+            prev_size, prev_var = sorted_results[i-1]
+            curr_size, curr_var = sorted_results[i]
+            
+            # Calculate relative drop
+            if prev_var > 0:
+                rel_drop = (prev_var - curr_var) / prev_var
+                variance_drops.append((curr_size, rel_drop))
+        
+        # Sort drops by magnitude (descending)
+        if variance_drops:
+            sorted_drops = sorted(variance_drops, key=lambda x: x[1], reverse=True)
+            
+            if self.debug:
+                print(f"DEBUG: Top 3 variance drops:")
+                for i, (size, drop) in enumerate(sorted_drops[:3]):
+                    print(f"DEBUG:   #{i+1}: Size {size} - Relative drop: {drop:.3f}")
+            
+            # If there's a significant drop (>20%), use that size
+            if sorted_drops[0][1] > 0.2:
+                best_size = sorted_drops[0][0]
+                if self.debug:
+                    print(f"DEBUG: Selected size {best_size} based on significant variance drop")
+                return best_size
+        
+        # Otherwise use the size with minimum variance
+        best_size = sorted_results[0][0]
+        
+        # Prefer sizes that are powers of 2 or common pixel art sizes
+        preferred_sizes = [8, 16, 32, 24, 12]
+        for size, variance in sorted_results[:3]:  # Consider top 3 results
+            if size in preferred_sizes:
+                best_size = size
+                break
+                
+        if self.debug:
+            print(f"DEBUG: Selected best size from variance method: {best_size}")
+                    
+        return best_size
+        
+    def _find_best_offset(self, edges: np.ndarray, cell_size: int) -> Tuple[int, int]:
+        """
+        Find optimal grid offset for given cell size.
+        
+        Args:
+            edges: Binary edge image
+            cell_size: Detected cell size
+            
+        Returns:
+            (x_offset, y_offset) tuple
+        """
+        height, width = edges.shape
+        best_score = 0
         best_offset = (0, 0)
         
-        # Search within one cell size
-        for x_offset in range(0, cell_size):
-            for y_offset in range(0, cell_size):
-                score = self._boundary_edge_score(cell_size, (x_offset, y_offset))
+        # Limit search range to prevent freezing
+        max_offset = min(32, cell_size)
+        step_size = max(1, cell_size // 8)  # Sample fewer offsets for large cells
+        
+        for x_offset in range(0, max_offset, step_size):
+            for y_offset in range(0, max_offset, step_size):
+                # Score this offset based on edge alignment
+                score = self._score_grid_alignment(edges, cell_size, (x_offset, y_offset))
                 
                 if score > best_score:
                     best_score = score
                     best_offset = (x_offset, y_offset)
-        
+                    
         return best_offset
-    
-    def _boundary_edge_score(self, cell_size: int, offset: Tuple[int, int]) -> float:
+        
+    def _score_grid_alignment(self, edges: np.ndarray, cell_size: int, 
+                            offset: Tuple[int, int]) -> float:
         """
-        Score how well grid boundaries align with image edges.
+        Score how well edges align with grid lines.
         
         Args:
-            cell_size: Size of each grid cell
-            offset: Grid offset
+            edges: Binary edge image
+            cell_size: Cell size
+            offset: Grid offset to test
             
         Returns:
-            Score representing boundary alignment quality
+            Alignment score (higher is better)
         """
+        height, width = edges.shape
         x_offset, y_offset = offset
-        score = 0
         
-        # Check vertical grid lines
-        for x in range(x_offset, self.width - 1, cell_size):
-            if x < self.width - 1:
-                # Count color differences across this vertical line
-                left_col = self.gray[:, x]
-                right_col = self.gray[:, x + 1]
-                score += np.sum(np.abs(left_col.astype(int) - right_col.astype(int)) > 10)
+        total_score = 0
+        line_count = 0
         
-        # Check horizontal grid lines
-        for y in range(y_offset, self.height - 1, cell_size):
-            if y < self.height - 1:
-                # Count color differences across this horizontal line
-                top_row = self.gray[y, :]
-                bottom_row = self.gray[y + 1, :]
-                score += np.sum(np.abs(top_row.astype(int) - bottom_row.astype(int)) > 10)
+        # Score vertical grid lines
+        for x in range(x_offset, width, cell_size):
+            if x < width:
+                line_strength = np.sum(edges[:, x])
+                total_score += line_strength
+                line_count += 1
                 
-        return score
-    
-    def _intra_block_variance(self, cell_size: int, offset: Tuple[int, int]) -> float:
-        """
-        Calculate average color variance within grid blocks.
-        
-        Args:
-            cell_size: Size of each grid cell
-            offset: Grid offset
-            
-        Returns:
-            Average variance within all blocks
-        """
-        x_offset, y_offset = offset
-        variances = []
-        
-        # Analyze each grid block
-        for y in range(y_offset, self.height - cell_size, cell_size):
-            for x in range(x_offset, self.width - cell_size, cell_size):
-                # Extract block
-                block = self.gray[y:y+cell_size, x:x+cell_size]
+        # Score horizontal grid lines  
+        for y in range(y_offset, height, cell_size):
+            if y < height:
+                line_strength = np.sum(edges[y, :])
+                total_score += line_strength
+                line_count += 1
                 
-                # Calculate variance within this block
-                if block.size > 0:
-                    variances.append(np.var(block))
+        return total_score / max(line_count, 1)
         
-        return np.mean(variances) if variances else float('inf')
-    
-    def _snap_to_grid(self) -> np.ndarray:
+    def _crop_to_grid(self) -> np.ndarray:
         """
-        Step 2: Snap image to grid using modal color per cell.
-        
+        Crop the image to the detected grid, preserving all pixel values.
         Returns:
-            Grid-snapped pixel art
+            Cropped/Aligned image
         """
+        height, width, channels = self.image.shape
         x_offset, y_offset = self.offset
+        # Only keep the largest region that fits a whole number of cells
+        x_max = ((width - x_offset) // self.cell_size) * self.cell_size + x_offset
+        y_max = ((height - y_offset) // self.cell_size) * self.cell_size + y_offset
+        cropped = self.image[y_offset:y_max, x_offset:x_max]
+        return cropped
         
-        # Calculate logical grid dimensions
-        logical_width = (self.width - x_offset + self.cell_size - 1) // self.cell_size
-        logical_height = (self.height - y_offset + self.cell_size - 1) // self.cell_size
+    def _find_modal_color(self, cell: np.ndarray) -> np.ndarray:
+        """
+        Find the most common color in a cell.
         
-        # Create pixel art array
-        if len(self.original.shape) == 3:
-            pixel_art = np.zeros((logical_height, logical_width, 3), dtype=np.uint8)
-        else:
-            pixel_art = np.zeros((logical_height, logical_width), dtype=np.uint8)
+        Args:
+            cell: Image cell as numpy array
+            
+        Returns:
+            Modal color as RGB array
+        """
+        if cell.size == 0:
+            return np.array([0, 0, 0])
+            
+        # Reshape to list of colors
+        pixels = cell.reshape(-1, cell.shape[-1])
         
-        # Extract modal color for each grid cell
-        for row in range(logical_height):
-            for col in range(logical_width):
-                # Calculate pixel coordinates for this block
-                y_start = y_offset + row * self.cell_size
-                y_end = min(y_start + self.cell_size, self.height)
-                x_start = x_offset + col * self.cell_size  
-                x_end = min(x_start + self.cell_size, self.width)
-                
-                # Skip if block is completely outside image
-                if y_start >= self.height or x_start >= self.width:
-                    continue
-                
-                # Extract block (may be partial at edges)
-                block = self.original[y_start:y_end, x_start:x_end]
-                
-                # Skip empty blocks
-                if block.size == 0:
-                    continue
-                
-                # Find modal color
-                if len(self.original.shape) == 3:
-                    # For RGB, find mode of each channel
-                    modal_color = []
-                    for channel in range(3):
-                        channel_data = block[:, :, channel].flatten()
-                        mode_result = stats.mode(channel_data, keepdims=True)
-                        modal_color.append(mode_result.mode[0])
-                    pixel_art[row, col] = modal_color
-                else:
-                    # For grayscale
-                    block_data = block.flatten()
-                    mode_result = stats.mode(block_data, keepdims=True)
-                    pixel_art[row, col] = mode_result.mode[0]
+        # Find unique colors and their counts
+        unique_colors, counts = np.unique(pixels, axis=0, return_counts=True)
         
-        return pixel_art
-    
+        # Return most frequent color
+        modal_idx = np.argmax(counts)
+        return unique_colors[modal_idx]
+        
     def _refine_artifacts(self) -> np.ndarray:
         """
-        Step 3: Refine artifacts using neighbor majority vote.
+        Refine reconstruction using neighbor majority vote.
         
         Returns:
-            Refined pixel art with artifacts corrected
+            Final refined image
         """
-        if self.pixel_art is None:
-            raise ValueError("Must run snap_to_grid first")
+        if self.grid_result is None:
+            return self.image
+            
+        result = self.grid_result.copy()
+        height, width = result.shape[:2]
+        x_offset, y_offset = self.offset
         
-        refined = self.pixel_art.copy()
-        height, width = refined.shape[:2]
-        
-        # Apply neighbor majority vote filter
-        for row in range(height):
-            for col in range(width):
-                # Get current color
-                if len(refined.shape) == 3:
-                    current_color = tuple(refined[row, col])
-                else:
-                    current_color = refined[row, col]
+        # Apply majority vote smoothing to reduce artifacts
+        for y in range(y_offset, height, self.cell_size):
+            for x in range(x_offset, width, self.cell_size):
+                y_end = min(y + self.cell_size, height)
+                x_end = min(x + self.cell_size, width)
                 
-                # Get neighbor colors (4-connected)
-                neighbor_colors = []
-                for dy, dx in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
-                    ny, nx = row + dy, col + dx
-                    if 0 <= ny < height and 0 <= nx < width:
-                        if len(refined.shape) == 3:
-                            neighbor_color = tuple(refined[ny, nx])
-                        else:
-                            neighbor_color = refined[ny, nx]
-                        neighbor_colors.append(neighbor_color)
+                # Get neighboring cell colors
+                neighbors = self._get_neighbor_colors(result, x, y, x_end, y_end)
                 
-                # Find majority neighbor color
-                if neighbor_colors:
-                    color_counts = Counter(neighbor_colors)
-                    majority_color, count = color_counts.most_common(1)[0]
+                if len(neighbors) > 0:
+                    # Find majority color among neighbors
+                    majority_color = self._find_modal_color(np.array(neighbors))
                     
-                    # Replace if current color is outlier (threshold 0.7 = 3/4 neighbors)
-                    if count / len(neighbor_colors) >= 0.7 and majority_color != current_color:
-                        if len(refined.shape) == 3:
-                            refined[row, col] = majority_color
-                        else:
-                            refined[row, col] = majority_color
+                    # Use neighbor majority if significantly different from current
+                    current_color = result[y, x] if y < height and x < width else np.array([0, 0, 0])
+                    
+                    if not np.array_equal(current_color, majority_color):
+                        # Only change if there's strong neighbor consensus
+                        if len(neighbors) >= 3:
+                            result[y:y_end, x:x_end] = majority_color
+                            
+        return result
+        
+    def _get_neighbor_colors(self, image: np.ndarray, x: int, y: int, 
+                           x_end: int, y_end: int) -> list:
+        """
+        Get colors of neighboring cells.
+        
+        Args:
+            image: Current image
+            x, y: Cell top-left coordinates
+            x_end, y_end: Cell bottom-right coordinates
+            
+        Returns:
+            List of neighbor colors
+        """
+        height, width = image.shape[:2]
+        neighbors = []
+        
+        # Check 8 neighboring cells
+        for dy in [-self.cell_size, 0, self.cell_size]:
+            for dx in [-self.cell_size, 0, self.cell_size]:
+                if dx == 0 and dy == 0:
+                    continue  # Skip self
+                    
+                nx, ny = x + dx, y + dy
+                
+                if (0 <= nx < width and 0 <= ny < height):
+                    neighbor_color = image[ny, nx]
+                    neighbors.append(neighbor_color)
+                    
+        return neighbors
 
-        return refined
 
-
-def validate_reconstruction(image_path: str) -> None:
+def create_validation_overlay(original_path: str, reconstructed: np.ndarray, 
+                            cell_size: int, offset: Tuple[int, int]) -> np.ndarray:
     """
-    Validate the pixel art reconstruction pipeline.
+    Create side-by-side comparison with grid overlay for validation.
     
     Args:
-        image_path: Path to input image
+        original_path: Path to original image
+        reconstructed: Reconstructed image
+        cell_size: Grid cell size
+        offset: Grid offset
+        
+    Returns:
+        Validation overlay image
     """
-    import os
-    from grid_tests import GridVisualizer, ReconstructionAnalyzer
+    # Load original
+    with Image.open(original_path) as img:
+        if img.mode != 'RGB':
+            img = img.convert('RGB')
+        original = np.array(img)
     
-    if not os.path.exists(image_path):
-        print(f"Error: Image not found: {image_path}")
-        return
-    
-    print(f"Validating reconstruction pipeline for: {image_path}")
-    print("=" * 60)
-    
-    # Load original image
-    try:
-        original = np.array(Image.open(image_path))
-        print(f"Loaded image: {original.shape}")
-    except Exception as e:
-        print(f"Error loading image: {e}")
-        return
-    
-    # Run unified reconstruction pipeline
-    print("Running reconstruction pipeline...")
-    try:
-        reconstructor = PixelArtReconstructor(original)
-        pixel_art = reconstructor.run()
-        
-        print(f"Detected cell size: {reconstructor.cell_size}px")
-        print(f"Detected offset: {reconstructor.offset}")
-        print(f"Reconstructed size: {pixel_art.shape}")
-        
-        # Calculate reduction factor
-        orig_pixels = original.shape[0] * original.shape[1]
-        recon_pixels = pixel_art.shape[0] * pixel_art.shape[1]
-        reduction_factor = orig_pixels / recon_pixels
-        print(f"Pixel reduction: {reduction_factor:.1f}x")
-        
-    except Exception as e:
-        print(f"Error during reconstruction: {e}")
-        return
-    
-    # Create output directory
-    base_name = os.path.splitext(os.path.basename(image_path))[0]
-    output_dir = "output/validation"
-    os.makedirs(output_dir, exist_ok=True)
-    
-    # 1. Create visual grid overlay on original
-    print("Creating grid overlay...")
-    visualizer = GridVisualizer(original)
-    grid_overlay = visualizer.create_grid_overlay(
-        reconstructor.cell_size, 
-        reconstructor.offset,
-        color=(255, 0, 255)  # Magenta grid lines
-    )
-    
-    grid_overlay_path = os.path.join(output_dir, f"{base_name}_grid_overlay.png")
-    Image.fromarray(grid_overlay).save(grid_overlay_path)
-    print(f"Saved grid overlay: {grid_overlay_path}")
-    
-    # 2. Create high-res difference overlay between original and upscaled output
-    print("Creating difference overlay...")
-    analyzer = ReconstructionAnalyzer(original, pixel_art)
-    diff_overlay = analyzer.create_difference_overlay(reconstructor.cell_size)
-    
-    diff_overlay_path = os.path.join(output_dir, f"{base_name}_difference_overlay.png")
-    Image.fromarray(diff_overlay).save(diff_overlay_path)
-    print(f"Saved difference overlay: {diff_overlay_path}")
-    
-    # Also save the pure pixel art for reference
-    pixel_art_path = os.path.join(output_dir, f"{base_name}_pixel_art.png")
-    Image.fromarray(pixel_art).save(pixel_art_path)
-    print(f"Saved pixel art: {pixel_art_path}")
-    
-    print("\nVALIDATION COMPLETE")
-    print("=" * 60)
-    print("Check the following outputs:")
-    print(f"1. Grid overlay (shows detected grid alignment): {grid_overlay_path}")
-    print(f"2. Difference overlay (shows reconstruction errors): {diff_overlay_path}")
-    print(f"3. Pure pixel art result: {pixel_art_path}")
-    print("\nGrid overlay should align with visual blocks.")
-    print("Difference overlay should be mostly black (minimal magenta = good reconstruction).")
+    # Upscale reconstructed to original size for overlay
+    h, w = original.shape[:2]
+    rec = reconstructed
+    rec_up = cv2.resize(rec, (w, h), interpolation=cv2.INTER_NEAREST)
+
+    # Create high-res difference overlay (red for differences)
+    diff = np.any(original != rec_up, axis=-1)
+    overlay = original.copy()
+    overlay[diff] = [255, 0, 0]  # Red highlight for differences
+
+    # Side-by-side: [original | overlay | upscaled reconstruction]
+    comparison = np.hstack([original, overlay, rec_up])
+    return comparison
 
 
-def process_all_images() -> None:
-    """
-    Process all images in the input directory.
-    """
-    import os
-    import glob
+def process_all_images(debug=False):
+    """Process all images in the input directory."""
+    input_dir = Path("input")
+    output_dir = Path("output")
     
-    input_dir = "input"
+    # Create output directory if it doesn't exist
+    output_dir.mkdir(exist_ok=True)
     
-    if not os.path.exists(input_dir):
-        print(f"Error: Input directory '{input_dir}' not found!")
-        return
-    
-    # Find all image files in input directory
-    image_extensions = ["*.png", "*.jpg", "*.jpeg", "*.bmp", "*.tiff", "*.gif"]
-    image_files = []
-    
-    for ext in image_extensions:
-        image_files.extend(glob.glob(os.path.join(input_dir, ext)))
-        image_files.extend(glob.glob(os.path.join(input_dir, ext.upper())))
+    # Get all image files
+    image_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.webp'}
+    image_files = [f for f in input_dir.iterdir()
+                  if f.is_file() and f.suffix.lower() in image_extensions]
     
     if not image_files:
-        print(f"No image files found in '{input_dir}' directory!")
-        print("Supported formats: PNG, JPG, JPEG, BMP, TIFF, GIF")
+        print("No image files found in input/ directory")
         return
+        
+    print(f"Found {len(image_files)} image(s) to process")
     
-    print(f"Found {len(image_files)} image(s) to process:")
-    for img in image_files:
-        print(f"  - {os.path.basename(img)}")
-    print()
-    
-    # Process each image
-    for i, image_path in enumerate(image_files, 1):
-        print(f"\n[{i}/{len(image_files)}] Processing: {os.path.basename(image_path)}")
-        print("-" * 80)
-        validate_reconstruction(image_path)
-    
-    print(f"\n🎉 BATCH PROCESSING COMPLETE")
-    print(f"Processed {len(image_files)} images successfully!")
-    print("Check the 'output/validation' directory for results.")
+    for image_file in image_files:
+        try:
+            # Process image
+            reconstructor = PixelArtReconstructor(str(image_file), debug=debug)
+            result = reconstructor.run()
+
+            # Save reconstructed image
+            output_path = output_dir / f"{image_file.stem}_reconstructed{image_file.suffix}"
+            Image.fromarray(result).save(output_path)
+
+            # Create and save validation overlay
+            overlay = create_validation_overlay(
+                str(image_file), result, 
+                reconstructor.cell_size, reconstructor.offset
+            )
+            overlay_path = output_dir / f"{image_file.stem}_validation{image_file.suffix}"
+            Image.fromarray(overlay).save(overlay_path)
+
+            # --- Automated Output Analysis ---
+            overlay_np = np.array(overlay)
+            red_mask = (overlay_np[..., 0] == 255) & (overlay_np[..., 1] == 0) & (overlay_np[..., 2] == 0)
+            percent_diff = 100.0 * np.sum(red_mask) / (overlay_np.shape[0] * overlay_np.shape[1])
+            grid_size = reconstructor.cell_size
+            img_h, img_w = overlay_np.shape[:2]
+            grid_ratio = grid_size / min(img_h, img_w)
+            warnings = []
+            if percent_diff > 10.0:
+                warnings.append(f"High difference: {percent_diff:.1f}% pixels differ from input.")
+            if grid_ratio > 0.25:
+                warnings.append(f"Grid size {grid_size} is large relative to image size {min(img_h, img_w)}.")
+            if grid_size < 4:
+                warnings.append(f"Grid size {grid_size} is very small (may be noise).")
+
+            # Save debug grid detection plots
+            reconstructor.debug_grid_detection(save_dir="output/grid_debug")
+
+            print(f"Saved: {output_path} and {overlay_path}")
+            if warnings:
+                print("  [WARN] " + " ".join(warnings))
+            else:
+                print("  Output appears reasonable.")
+
+        except Exception as e:
+            print(f"Error processing {image_file}: {e}")
 
 
 if __name__ == "__main__":
     import sys
-    import os
-    
-    if len(sys.argv) > 1:
-        # Single image mode (backward compatibility)
-        image_path = sys.argv[1]
-        if os.path.exists(image_path):
-            validate_reconstruction(image_path)
-        else:
-            print(f"Error: Image file '{image_path}' not found!")
-    else:
-        # Batch mode - process all images in input directory
-        print("Pixel Art Reconstructor - Unified Pipeline")
-        print("Processing all images in 'input/' directory...\n")
-        process_all_images()
+    debug_mode = "--debug" in sys.argv
+    process_all_images(debug=debug_mode)

@@ -41,4 +41,10 @@
 
 Sonnet 4 still gets carried away an creates new files despite explicit instructions against doing so. 
 
-modifying main script to not require any arguments and to just take in all images in /input for easy manual testing. 
+modifying main script to not require any arguments and to just take in all images in /input for easy manual testing.
+
+set up image viewer tool with resample for zooming (non-blurry zoom) for better manual visual validation. 
+
+Sonnet 4 still goes off the rails. Assumes that because script runs without errors the outputs are good. Makes a premature "final_status.md" file. Switching to GPT-4.1 to see if it's possible to stay more on track. 
+
+GPT 4.1 keeps asking too many unnecessary questions (stalling) instead of working agentically and independently. 
