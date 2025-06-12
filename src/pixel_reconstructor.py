@@ -222,49 +222,88 @@ class PixelArtReconstructor:
         # If no valid periods, return 0 to trigger fallback
         if not h_valid and not v_valid:
             return 0
-            
+        
         # Check for common periods between horizontal and vertical (high confidence)
-        common_periods = set([p for p, _ in h_valid]).intersection([p for p, _ in v_valid])
-        if common_periods:
-            # If multiple common periods, prefer the one with highest combined strength
-            if len(common_periods) > 1:
-                best_common = 0
-                best_strength = 0
-                for p in common_periods:
-                    h_strength = next((s for period, s in h_valid if period == p), 0)
-                    v_strength = next((s for period, s in v_valid if period == p), 0)
-                    combined = h_strength + v_strength
-                    if combined > best_strength:
-                        best_strength = combined
-                        best_common = p
-                if self.debug:
-                    print(f"DEBUG: Selected common period with highest strength: {best_common}")
-                return best_common
-            else:
-                # Single common period
-                common_period = list(common_periods)[0]
-                if self.debug:
-                    print(f"DEBUG: Found common period: {common_period}")
-                return common_period
-                
-        # No common periods, use the strongest period from either axis
+        # This addresses the "Common Period Detection" requirement - prioritize this first
+        
+        # First, check for exact matches
+        exact_common_periods = []
+        for p in set([p for p, _ in h_valid]).intersection([p for p, _ in v_valid]):
+            h_strength = next((s for period, s in h_valid if period == p), 0)
+            v_strength = next((s for period, s in v_valid if period == p), 0)
+            combined_strength = h_strength + v_strength
+            exact_common_periods.append((p, combined_strength))
+            if self.debug:
+                print(f"DEBUG: Found exact common period: {p} with strength {combined_strength:.3f}")
+        
+        # Then, check for approximate matches (allowing small differences)
+        approx_common_periods = []
+        for h_p, h_s in h_valid:
+            for v_p, v_s in v_valid:
+                # Skip exact matches as they're already handled
+                if h_p == v_p:
+                    continue
+                    
+                # Allow periods to differ by up to 5% of the smaller period
+                tolerance = min(h_p, v_p) * 0.05
+                if abs(h_p - v_p) <= tolerance:
+                    # Use the average of the two periods
+                    avg_period = round((h_p + v_p) / 2)
+                    # Calculate combined strength
+                    combined_strength = h_s + v_s
+                    approx_common_periods.append((avg_period, combined_strength))
+                    if self.debug:
+                        print(f"DEBUG: Found approximate common period: {avg_period} (h:{h_p}, v:{v_p}) with strength {combined_strength:.3f}")
+        
+        # Combine exact and approximate matches and select the best one
+        all_common_periods = exact_common_periods + approx_common_periods
+        
+        if all_common_periods:
+            # Sort by strength (descending)
+            sorted_common = sorted(all_common_periods, key=lambda x: x[1], reverse=True)
+            
+            # For smiley and star images, we want to prioritize smaller periods when strengths are close
+            # This helps with the specific case where both 32 and 64 are detected with similar strengths
+            best_period = sorted_common[0][0]
+            best_strength = sorted_common[0][1]
+            
+            # Check if there's a smaller period with similar strength (within 5%)
+            for period, strength in sorted_common:
+                if period < best_period and strength >= best_strength * 0.95:
+                    best_period = period
+                    best_strength = strength
+                    if self.debug:
+                        print(f"DEBUG: Selected smaller period {best_period} with similar strength {best_strength:.3f}")
+                    break
+            
+            if self.debug:
+                print(f"DEBUG: Selected best common period: {best_period} with strength {best_strength:.3f}")
+            return best_period
+        
+        # Global peak analysis - combine all peaks for analysis
         all_valid = h_valid + v_valid
+        
+        # Check for harmonic relationships across all periods
+        # This addresses the "Harmonic Relationship Analysis" requirement
+        harmonics = self._check_harmonics(all_valid)
+        if harmonics:
+            if self.debug:
+                print(f"DEBUG: Detected harmonic relationship across all periods: {harmonics}")
+            # Use the fundamental period (first harmonic)
+            fundamental_period = harmonics[0]
+            if self.debug:
+                print(f"DEBUG: Selected fundamental period from harmonics: {fundamental_period}")
+            return fundamental_period
+        
+        # No common periods or harmonics, use the strongest period from either axis
+        # This addresses the "Strength-Based Selection" requirement
         if all_valid:
             # Sort by strength (descending)
             sorted_periods = sorted(all_valid, key=lambda x: x[1], reverse=True)
             best_period = sorted_periods[0][0]
             
-            # Check for harmonic relationships
-            harmonics = self._check_harmonics(sorted_periods)
-            if harmonics and self.debug:
-                print(f"DEBUG: Detected harmonic relationship: {harmonics}")
-                
-            # If we found harmonics, use the fundamental period
-            if harmonics:
-                best_period = harmonics[0]
-                
             if self.debug:
-                print(f"DEBUG: Selected strongest period: {best_period}")
+                print(f"DEBUG: Selected strongest period: {best_period} with strength {sorted_periods[0][1]:.3f}")
             return best_period
             
         # Shouldn't reach here, but just in case
@@ -282,21 +321,50 @@ class PixelArtReconstructor:
         """
         if len(periods) < 2:
             return None
-            
-        # Extract just the periods
-        period_values = [p for p, _ in periods]
         
-        # Check for common divisors or multiples
+        # Sort periods by value (ascending)
+        sorted_periods = sorted(periods, key=lambda x: x[0])
+        period_values = [p for p, _ in sorted_periods]
+        period_strengths = [s for _, s in sorted_periods]
+        
+        # Group periods by potential harmonic relationships
+        harmonic_groups = []
+        
+        # For each potential fundamental period
         for i, p1 in enumerate(period_values):
-            harmonics = []
-            for p2 in period_values:
+            if p1 < 8:  # Skip very small periods as they're unlikely to be fundamental
+                continue
+                
+            harmonics = [p1]
+            strengths = [period_strengths[i]]
+            
+            # Check which other periods might be harmonics of this one
+            for j, p2 in enumerate(period_values):
+                if i == j:
+                    continue  # Skip self
+                
                 # Check if p2 is approximately a multiple of p1
-                if p2 > p1 and abs(p2 % p1) < 2:  # Allow small error
-                    harmonics.append(p2)
-                    
-            if harmonics:
-                # Found harmonic relationship
-                return [p1] + harmonics
+                if p2 > p1:
+                    ratio = p2 / p1
+                    # Check if ratio is close to an integer
+                    nearest_int = round(ratio)
+                    # More strict criteria for harmonic relationship
+                    if abs(ratio - nearest_int) < 0.1 and nearest_int > 1 and nearest_int <= 4:  # Allow 10% error, max 4x multiple
+                        harmonics.append(p2)
+                        strengths.append(period_strengths[j])
+            
+            # If we found at least one harmonic relationship
+            if len(harmonics) > 1:
+                # Calculate a score based on number of harmonics and their strengths
+                score = len(harmonics) * sum(strengths)
+                harmonic_groups.append((harmonics, score))
+        
+        # If we found harmonic groups, return the one with the highest score
+        if harmonic_groups:
+            best_group = max(harmonic_groups, key=lambda x: x[1])
+            if self.debug:
+                print(f"DEBUG: Best harmonic group: {best_group[0]} with score {best_group[1]:.3f}")
+            return best_group[0]
                 
         return None
             
@@ -335,13 +403,13 @@ class PixelArtReconstructor:
         peak_periods = []
         peak_strengths = []
         
-        # Use a lower threshold to capture more potential peaks
-        threshold = 0.4  # Lower threshold to capture more potential peaks
+        # Use a lower threshold to capture more potential peaks for images with weaker signals
+        threshold = 0.4  # Lower threshold as specified in requirements
         
         # Minimum peak distance (to avoid detecting very close peaks)
         min_peak_distance = 3
         
-        # Find all peaks
+        # Find all peaks using a more robust approach
         for lag in range(4, min(len(correlation), len(signal)//4)):
             # Check if this point is a local maximum
             is_peak = (lag > 0 and correlation[lag] > correlation[lag-1] and
@@ -386,8 +454,13 @@ class PixelArtReconstructor:
             print(f"DEBUG: Variance-based detection testing sizes from 4 to {max_test_size}")
             
         variance_results = []
+        edge_alignment_scores = []
+        
+        # Detect edges for alignment scoring
+        edges = cv2.Canny(cv2.GaussianBlur(gray, (3, 3), 0), 50, 150)
         
         for size in range(4, max_test_size + 1):
+            # Calculate variance-based score
             total_variance = 0
             block_count = 0
             
@@ -402,11 +475,91 @@ class PixelArtReconstructor:
             if block_count > 0:
                 avg_variance = total_variance / block_count
                 variance_results.append((size, avg_variance))
+            
+            # Calculate edge alignment score for this size
+            alignment_score = 0
+            for offset_x in range(size):
+                for offset_y in range(size):
+                    score = self._score_grid_alignment(edges, size, (offset_x, offset_y))
+                    alignment_score = max(alignment_score, score)
+            
+            edge_alignment_scores.append((size, alignment_score))
         
         if not variance_results:
             if self.debug:
-                print("DEBUG: No variance results, returning default size 8")
-            return 8
+                print("DEBUG: No variance results, analyzing image properties to determine best size")
+                
+            # Analyze image dimensions for common divisors instead of using fixed fallback
+            common_divisors = []
+            for i in range(4, min(32, min(width, height)//4)):
+                if width % i < i//4 and height % i < i//4:  # Allow some tolerance
+                    common_divisors.append(i)
+            
+            if common_divisors:
+                best_size = max(common_divisors)  # Prefer larger divisors
+                if self.debug:
+                    print(f"DEBUG: Selected size {best_size} based on image dimensions")
+                return best_size
+            
+            # If no good divisors found, use edge detection to estimate
+            if edge_alignment_scores:
+                best_edge_size = max(edge_alignment_scores, key=lambda x: x[1])[0]
+                if self.debug:
+                    print(f"DEBUG: Selected size {best_edge_size} based on edge alignment")
+                return best_edge_size
+                
+            # Last resort - analyze frequency domain
+            # This is a simplified approach - in a real implementation, we might use FFT
+            row_diff = np.diff(gray, axis=1)
+            col_diff = np.diff(gray, axis=0)
+            
+            row_periods = []
+            col_periods = []
+            
+            # Find runs of similar values
+            for i in range(min(100, height)):
+                run_lengths = []
+                current_run = 1
+                for j in range(1, width-1):
+                    if abs(row_diff[i, j] - row_diff[i, j-1]) < 10:
+                        current_run += 1
+                    else:
+                        if current_run > 3:
+                            run_lengths.append(current_run)
+                        current_run = 1
+                if current_run > 3:
+                    run_lengths.append(current_run)
+                if run_lengths:
+                    row_periods.append(np.median(run_lengths))
+            
+            for j in range(min(100, width)):
+                run_lengths = []
+                current_run = 1
+                for i in range(1, height-1):
+                    if abs(col_diff[i, j] - col_diff[i-1, j]) < 10:
+                        current_run += 1
+                    else:
+                        if current_run > 3:
+                            run_lengths.append(current_run)
+                        current_run = 1
+                if current_run > 3:
+                    run_lengths.append(current_run)
+                if run_lengths:
+                    col_periods.append(np.median(run_lengths))
+            
+            if row_periods or col_periods:
+                all_periods = row_periods + col_periods
+                if all_periods:
+                    best_size = max(4, int(np.median(all_periods)))
+                    if self.debug:
+                        print(f"DEBUG: Selected size {best_size} based on run length analysis")
+                    return best_size
+            
+            # If all else fails, use a more reasonable default based on image size
+            best_size = max(4, min(16, min(width, height) // 20))
+            if self.debug:
+                print(f"DEBUG: Using size {best_size} based on image dimensions")
+            return best_size
             
         # Sort by variance (ascending)
         sorted_results = sorted(variance_results, key=lambda x: x[1])
@@ -443,18 +596,33 @@ class PixelArtReconstructor:
                     print(f"DEBUG: Selected size {best_size} based on significant variance drop")
                 return best_size
         
-        # Otherwise use the size with minimum variance
-        best_size = sorted_results[0][0]
+        # Combine variance results with edge alignment scores
+        combined_scores = []
+        for size, var in sorted_results:
+            # Find corresponding edge alignment score
+            edge_score = next((score for s, score in edge_alignment_scores if s == size), 0)
+            # Normalize variance (lower is better)
+            norm_var = 1.0 - (var / sorted_results[-1][1]) if sorted_results[-1][1] > 0 else 0
+            # Normalize edge score (higher is better)
+            max_edge = max(score for _, score in edge_alignment_scores) if edge_alignment_scores else 1
+            norm_edge = edge_score / max_edge if max_edge > 0 else 0
+            # Combined score (weighted sum)
+            combined = (0.6 * norm_var) + (0.4 * norm_edge)
+            combined_scores.append((size, combined))
         
-        # Prefer sizes that are powers of 2 or common pixel art sizes
-        preferred_sizes = [8, 16, 32, 24, 12]
-        for size, variance in sorted_results[:3]:  # Consider top 3 results
-            if size in preferred_sizes:
-                best_size = size
-                break
-                
+        # Sort by combined score (descending)
+        sorted_combined = sorted(combined_scores, key=lambda x: x[1], reverse=True)
+        
         if self.debug:
-            print(f"DEBUG: Selected best size from variance method: {best_size}")
+            print(f"DEBUG: Top 3 combined scores:")
+            for i, (size, score) in enumerate(sorted_combined[:3]):
+                print(f"DEBUG:   #{i+1}: Size {size} - Score: {score:.3f}")
+        
+        # Use the size with the best combined score
+        best_size = sorted_combined[0][0]
+        
+        if self.debug:
+            print(f"DEBUG: Selected best size from combined method: {best_size}")
                     
         return best_size
         
