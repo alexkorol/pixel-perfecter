@@ -86,8 +86,14 @@ class PixelArtReconstructor:
 
         print("Step 2: Empirical pixel art reconstruction...")
         reconstructed = self._empirical_pixel_reconstruction()
+        self.grid_result = reconstructed
+
+        print("Step 3: Artifact-aware refinement...")
+        refined = self._refine_artifacts()
+        self.grid_result = refined
+
         print("Done!")
-        return reconstructed
+        return refined
 
     def _empirical_pixel_reconstruction(self) -> np.ndarray:
         """
@@ -137,19 +143,26 @@ class PixelArtReconstructor:
         """
         # Convert to grayscale for edge detection
         gray = cv2.cvtColor(self.image, cv2.COLOR_RGB2GRAY)
-        
+
         # Apply Gaussian blur to reduce noise
         blurred = cv2.GaussianBlur(gray, (3, 3), 0)
-        
+
         # Detect edges using Canny
         edges = cv2.Canny(blurred, 50, 150)
-        
+
         # Find dominant cell size using projection analysis
         cell_size = self._find_dominant_period(edges)
-        
+
+        if cell_size <= 0:
+            # Fallback immediately when period detection fails
+            cell_size = self._detect_cell_size_variance()
+
         # Find best offset for this cell size
         offset = self._find_best_offset(edges, cell_size)
-        
+
+        # Run a refinement pass that double-checks divisors and nearby sizes
+        cell_size, offset = self._refine_cell_size(gray, edges, cell_size, offset)
+
         return cell_size, offset
         
     def _find_dominant_period(self, edges: np.ndarray) -> int:
@@ -649,12 +662,225 @@ class PixelArtReconstructor:
             for y_offset in range(0, max_offset, step_size):
                 # Score this offset based on edge alignment
                 score = self._score_grid_alignment(edges, cell_size, (x_offset, y_offset))
-                
+
                 if score > best_score:
                     best_score = score
                     best_offset = (x_offset, y_offset)
-                    
+
         return best_offset
+
+    def _refine_cell_size(self, gray: np.ndarray, edges: np.ndarray,
+                          initial_size: int, initial_offset: Tuple[int, int]) -> Tuple[int, Tuple[int, int]]:
+        """Refine the detected cell size by evaluating nearby candidates."""
+
+        height, width = gray.shape
+        max_candidate = max(4, min(64, width // 2, height // 2))
+
+        candidate_sizes = self._generate_cell_size_candidates(initial_size, max_candidate)
+
+        if self.debug:
+            print(f"DEBUG: Evaluating candidate cell sizes: {sorted(candidate_sizes)}")
+
+        evaluations = []
+
+        for size in sorted(candidate_sizes):
+            offset = self._find_best_offset(edges, size)
+            alignment = self._score_grid_alignment(edges, size, offset)
+            variance = self._calculate_block_variance(gray, size, offset)
+            reconstruction = self._reconstruct_with_parameters(size, offset)
+            diff_ratio = self._compute_difference_ratio(reconstruction, size, offset)
+
+            evaluations.append({
+                "size": size,
+                "offset": offset,
+                "alignment": alignment,
+                "variance": variance,
+                "diff_ratio": diff_ratio,
+            })
+
+        if not evaluations:
+            return initial_size, initial_offset
+
+        align_values = [e["alignment"] for e in evaluations]
+        variance_values = [e["variance"] for e in evaluations if np.isfinite(e["variance"])]
+        diff_values = [e["diff_ratio"] for e in evaluations]
+
+        min_align, max_align = min(align_values), max(align_values)
+        min_var = min(variance_values) if variance_values else None
+        max_var = max(variance_values) if variance_values else None
+        min_diff, max_diff = min(diff_values), max(diff_values)
+
+        best_entry = None
+        best_score = -np.inf
+
+        for entry in evaluations:
+            size = entry["size"]
+            alignment = entry["alignment"]
+            variance = entry["variance"]
+            diff_ratio = entry["diff_ratio"]
+
+            if max_align == min_align:
+                norm_align = 1.0
+            else:
+                norm_align = (alignment - min_align) / (max_align - min_align)
+
+            if min_var is None or not np.isfinite(variance):
+                norm_variance = 0.5
+            elif max_var == min_var:
+                norm_variance = 1.0
+            else:
+                norm_variance = 1.0 - ((variance - min_var) / (max_var - min_var))
+
+            if max_diff == min_diff:
+                norm_diff = 1.0
+            else:
+                norm_diff = 1.0 - ((diff_ratio - min_diff) / (max_diff - min_diff))
+
+            size_penalty = size / max(width, height)
+
+            score = (0.4 * norm_align) + (0.35 * norm_variance) + (0.25 * norm_diff) - (0.15 * size_penalty)
+
+            if self.debug:
+                print(
+                    "DEBUG: Candidate size {} offset {} -> align {:.3f} var {:.3f} diff {:.3f} score {:.3f}".format(
+                        size, entry["offset"], alignment, variance, diff_ratio, score
+                    )
+                )
+
+            if score > best_score:
+                best_score = score
+                best_entry = entry
+
+        if best_entry is None:
+            return initial_size, initial_offset
+
+        if self.debug and best_entry["size"] != initial_size:
+            print(
+                f"DEBUG: Refinement selected new cell size {best_entry['size']} (prev {initial_size}), "
+                f"offset {best_entry['offset']}"
+            )
+
+        return best_entry["size"], best_entry["offset"]
+
+    def _generate_cell_size_candidates(self, initial_size: int, max_candidate: int) -> set:
+        """Generate reasonable candidate cell sizes around the initial detection."""
+
+        candidates = {max(4, min(initial_size, max_candidate))}
+
+        for delta in (-2, -1, 1, 2):
+            candidate = initial_size + delta
+            if 4 <= candidate <= max_candidate:
+                candidates.add(candidate)
+
+        for divisor in (2, 3, 4):
+            reduced = initial_size // divisor
+            if 4 <= reduced <= max_candidate:
+                candidates.add(reduced)
+
+        for multiplier in (2, 3):
+            candidate = initial_size * multiplier
+            if 4 <= candidate <= max_candidate:
+                candidates.add(candidate)
+
+        return candidates
+
+    def _calculate_block_variance(self, gray: np.ndarray, cell_size: int,
+                                  offset: Tuple[int, int], max_samples: int = 512) -> float:
+        """Compute the mean variance of blocks for a candidate grid."""
+
+        height, width = gray.shape
+        x_offset, y_offset = offset
+
+        if cell_size <= 0:
+            return float("inf")
+
+        x_max = ((width - x_offset) // cell_size) * cell_size + x_offset
+        y_max = ((height - y_offset) // cell_size) * cell_size + y_offset
+
+        variances = []
+
+        for y in range(y_offset, y_max, cell_size):
+            for x in range(x_offset, x_max, cell_size):
+                block = gray[y:y + cell_size, x:x + cell_size]
+                if block.size == 0:
+                    continue
+                variances.append(float(np.var(block)))
+                if len(variances) >= max_samples:
+                    break
+            if len(variances) >= max_samples:
+                break
+
+        if not variances:
+            return float("inf")
+
+        return float(np.mean(variances))
+
+    def _reconstruct_with_parameters(self, cell_size: int, offset: Tuple[int, int]) -> Optional[np.ndarray]:
+        """Reconstruct using explicit grid parameters without mutating internal state."""
+
+        if cell_size <= 0:
+            return None
+
+        height, width, _ = self.image.shape
+        x_offset, y_offset = offset
+
+        if x_offset >= width or y_offset >= height:
+            return None
+
+        num_cells_x = (width - x_offset) // cell_size
+        num_cells_y = (height - y_offset) // cell_size
+
+        if num_cells_x <= 0 or num_cells_y <= 0:
+            return None
+
+        result = np.zeros((num_cells_y, num_cells_x, 3), dtype=np.uint8)
+
+        for i in range(num_cells_y):
+            for j in range(num_cells_x):
+                y0 = y_offset + i * cell_size
+                x0 = x_offset + j * cell_size
+                block = self.image[y0:y0 + cell_size, x0:x0 + cell_size]
+                if block.size == 0:
+                    continue
+                result[i, j] = self._find_modal_color(block)
+
+        return result
+
+    def _compute_difference_ratio(self, reconstructed: Optional[np.ndarray],
+                                  cell_size: int, offset: Tuple[int, int]) -> float:
+        """Measure how much the reconstructed grid diverges from the source image."""
+
+        if reconstructed is None or reconstructed.size == 0:
+            return 1.0
+
+        height, width, _ = self.image.shape
+        x_offset, y_offset = offset
+
+        num_cells_y, num_cells_x = reconstructed.shape[:2]
+        crop_width = num_cells_x * cell_size
+        crop_height = num_cells_y * cell_size
+
+        if crop_width == 0 or crop_height == 0:
+            return 1.0
+
+        x_end = min(width, x_offset + crop_width)
+        y_end = min(height, y_offset + crop_height)
+
+        original_crop = self.image[y_offset:y_end, x_offset:x_end]
+        if original_crop.size == 0:
+            return 1.0
+
+        upscale = cv2.resize(
+            reconstructed,
+            (crop_width, crop_height),
+            interpolation=cv2.INTER_NEAREST
+        )
+
+        upscaled_crop = upscale[:original_crop.shape[0], :original_crop.shape[1]]
+
+        diff = np.any(original_crop != upscaled_crop, axis=-1)
+
+        return float(np.mean(diff))
         
     def _score_grid_alignment(self, edges: np.ndarray, cell_size: int, 
                             offset: Tuple[int, int]) -> float:
@@ -735,64 +961,47 @@ class PixelArtReconstructor:
         Returns:
             Final refined image
         """
-        if self.grid_result is None:
-            return self.image
-            
+        if self.grid_result is None or self.grid_result.size == 0:
+            return self.grid_result if self.grid_result is not None else self.image
+
         result = self.grid_result.copy()
         height, width = result.shape[:2]
-        x_offset, y_offset = self.offset
-        
-        # Apply majority vote smoothing to reduce artifacts
-        for y in range(y_offset, height, self.cell_size):
-            for x in range(x_offset, width, self.cell_size):
-                y_end = min(y + self.cell_size, height)
-                x_end = min(x + self.cell_size, width)
-                
-                # Get neighboring cell colors
-                neighbors = self._get_neighbor_colors(result, x, y, x_end, y_end)
-                
-                if len(neighbors) > 0:
-                    # Find majority color among neighbors
-                    majority_color = self._find_modal_color(np.array(neighbors))
-                    
-                    # Use neighbor majority if significantly different from current
-                    current_color = result[y, x] if y < height and x < width else np.array([0, 0, 0])
-                    
-                    if not np.array_equal(current_color, majority_color):
-                        # Only change if there's strong neighbor consensus
-                        if len(neighbors) >= 3:
-                            result[y:y_end, x:x_end] = majority_color
-                            
+
+        for y in range(height):
+            for x in range(width):
+                neighbors = self._get_neighbor_colors(result, x, y)
+                if len(neighbors) < 3:
+                    continue
+
+                majority_color = self._find_modal_color(np.array(neighbors))
+                current_color = result[y, x]
+
+                if np.array_equal(current_color, majority_color):
+                    continue
+
+                color_delta = np.linalg.norm(current_color.astype(float) - majority_color.astype(float))
+
+                if color_delta > 30:
+                    result[y, x] = majority_color
+
         return result
-        
-    def _get_neighbor_colors(self, image: np.ndarray, x: int, y: int, 
-                           x_end: int, y_end: int) -> list:
-        """
-        Get colors of neighboring cells.
-        
-        Args:
-            image: Current image
-            x, y: Cell top-left coordinates
-            x_end, y_end: Cell bottom-right coordinates
-            
-        Returns:
-            List of neighbor colors
-        """
+
+    def _get_neighbor_colors(self, image: np.ndarray, x: int, y: int) -> list:
+        """Return the colours of 8-connected neighbours in the logical grid."""
+
         height, width = image.shape[:2]
         neighbors = []
-        
-        # Check 8 neighboring cells
-        for dy in [-self.cell_size, 0, self.cell_size]:
-            for dx in [-self.cell_size, 0, self.cell_size]:
+
+        for dy in (-1, 0, 1):
+            for dx in (-1, 0, 1):
                 if dx == 0 and dy == 0:
-                    continue  # Skip self
-                    
+                    continue
+
                 nx, ny = x + dx, y + dy
-                
-                if (0 <= nx < width and 0 <= ny < height):
-                    neighbor_color = image[ny, nx]
-                    neighbors.append(neighbor_color)
-                    
+
+                if 0 <= nx < width and 0 <= ny < height:
+                    neighbors.append(image[ny, nx])
+
         return neighbors
 
 
