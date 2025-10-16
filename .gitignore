@@ -36,3 +36,8 @@ ENV/
 input/
 output/
 debug/
+output_compare/
+notes/feedback_log.csv
+ml/data/
+ml/checkpoints/
+ml/runs/

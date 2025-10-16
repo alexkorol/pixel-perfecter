@@ -4,15 +4,12 @@ Unified Pixel Art Reconstruction Pipeline
 This module contains the consolidated, optimized pixel art reconstruction logic.
 """
 
-import argparse
-import csv
-import os
-from pathlib import Path
-from typing import List, Optional, Tuple
-
-import cv2
 import numpy as np
+import cv2
 from PIL import Image
+from pathlib import Path
+from typing import Tuple, Optional
+import os
 
 
 class PixelArtReconstructor:
@@ -20,12 +17,6 @@ class PixelArtReconstructor:
         """
         Save debug plots of edge projections and autocorrelations for this image.
         """
-        import matplotlib
-        try:
-            matplotlib.use("Agg")
-        except Exception:
-            # Backend may already be initialised; fallback silently
-            pass
         import matplotlib.pyplot as plt
         import os
         gray = cv2.cvtColor(self.image, cv2.COLOR_RGB2GRAY)
@@ -840,198 +831,72 @@ def create_validation_overlay(original_path: str, reconstructed: np.ndarray,
     return comparison
 
 
-def _compute_overlay_metrics(
-    overlay: np.ndarray, cell_size: int, offset: Tuple[int, int]
-) -> dict:
-    """Compute difference statistics for a validation overlay."""
-    overlay_np = np.array(overlay)
-    red_mask = (
-        (overlay_np[..., 0] == 255)
-        & (overlay_np[..., 1] == 0)
-        & (overlay_np[..., 2] == 0)
-    )
-    percent_diff = 100.0 * np.sum(red_mask) / (
-        overlay_np.shape[0] * overlay_np.shape[1]
-    )
-    grid_ratio = cell_size / min(overlay_np.shape[0], overlay_np.shape[1])
-
-    warnings: List[str] = []
-    if percent_diff > 10.0:
-        warnings.append(f"High difference: {percent_diff:.1f}% pixels differ from input.")
-    if grid_ratio > 0.25:
-        warnings.append(
-            f"Grid size {cell_size} is large relative to image size {min(overlay_np.shape[0], overlay_np.shape[1])}."
-        )
-    if cell_size < 4:
-        warnings.append(f"Grid size {cell_size} is very small (may be noise).")
-
-    return {
-        "cell_size": cell_size,
-        "offset": offset,
-        "percent_diff": float(percent_diff),
-        "grid_ratio": float(grid_ratio),
-        "warnings": warnings,
-    }
-
-
-def _evaluate_with_parameters(
-    image_path: Path,
-    cell_size: int,
-    offset: Tuple[int, int],
-    debug: bool,
-) -> dict:
-    """Evaluate reconstruction quality for explicit parameters."""
-    candidate = PixelArtReconstructor(str(image_path), debug=debug)
-    candidate.image = candidate._load_image()
-    if candidate.image is None:
-        raise ValueError(f"Could not load image: {image_path}")
-
-    candidate.cell_size = cell_size
-    candidate.offset = offset
-    result = candidate._empirical_pixel_reconstruction()
-    overlay = create_validation_overlay(str(image_path), result, cell_size, offset)
-    metrics = _compute_overlay_metrics(overlay, cell_size, offset)
-    return {
-        "result": result,
-        "overlay": overlay,
-        "metrics": metrics,
-        "reconstructor": candidate,
-    }
-
-
-def process_all_images(debug: bool = False, use_ml: bool = False):
+def process_all_images(debug=False):
     """Process all images in the input directory."""
     input_dir = Path("input")
     output_dir = Path("output")
-    grid_debug_dir = output_dir / "grid_debug"
-
+    
+    # Create output directory if it doesn't exist
     output_dir.mkdir(exist_ok=True)
-    grid_debug_dir.mkdir(exist_ok=True)
-
-    image_extensions = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".webp"}
-    image_files = [
-        f for f in input_dir.iterdir() if f.is_file() and f.suffix.lower() in image_extensions
-    ]
-
+    
+    # Get all image files
+    image_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.webp'}
+    image_files = [f for f in input_dir.iterdir()
+                  if f.is_file() and f.suffix.lower() in image_extensions]
+    
     if not image_files:
         print("No image files found in input/ directory")
         return
-
-    suggest_fn = None
-    if use_ml:
-        try:
-            from ml.inference import suggest_parameters as _suggest_parameters  # type: ignore
-
-            suggest_fn = _suggest_parameters
-        except Exception as exc:  # pylint: disable=broad-except
-            print(f"[WARN] ML suggestions unavailable: {exc}")
-            suggest_fn = None
-
+        
     print(f"Found {len(image_files)} image(s) to process")
-    metrics_records: List[dict] = []
-
+    
     for image_file in image_files:
         try:
+            # Process image
             reconstructor = PixelArtReconstructor(str(image_file), debug=debug)
             result = reconstructor.run()
 
-            overlay = create_validation_overlay(
-                str(image_file), result, reconstructor.cell_size, reconstructor.offset
-            )
-            metrics = _compute_overlay_metrics(
-                overlay, reconstructor.cell_size, reconstructor.offset
-            )
-
-            best = {
-                "result": result,
-                "overlay": overlay,
-                "metrics": metrics,
-                "reconstructor": reconstructor,
-            }
-            ml_applied = False
-
-            if suggest_fn:
-                suggestions = suggest_fn(str(image_file))
-                for suggestion in suggestions:
-                    candidate = _evaluate_with_parameters(
-                        image_path=image_file,
-                        cell_size=suggestion.cell_size,
-                        offset=suggestion.offset,
-                        debug=debug,
-                    )
-                    if (
-                        candidate["metrics"]["percent_diff"] + 0.1
-                        < best["metrics"]["percent_diff"]
-                    ):
-                        candidate["metrics"]["warnings"].append(
-                            f"Applied ML suggestion (conf={suggestion.confidence:.2f})"
-                        )
-                        best = candidate
-                        ml_applied = True
-
-            result = best["result"]
-            overlay = best["overlay"]
-            metrics = best["metrics"]
-            reconstructor = best["reconstructor"]
-
+            # Save reconstructed image
             output_path = output_dir / f"{image_file.stem}_reconstructed{image_file.suffix}"
             Image.fromarray(result).save(output_path)
 
+            # Create and save validation overlay
+            overlay = create_validation_overlay(
+                str(image_file), result, 
+                reconstructor.cell_size, reconstructor.offset
+            )
             overlay_path = output_dir / f"{image_file.stem}_validation{image_file.suffix}"
             Image.fromarray(overlay).save(overlay_path)
 
-            reconstructor.debug_grid_detection(save_dir=str(grid_debug_dir))
+            # --- Automated Output Analysis ---
+            overlay_np = np.array(overlay)
+            red_mask = (overlay_np[..., 0] == 255) & (overlay_np[..., 1] == 0) & (overlay_np[..., 2] == 0)
+            percent_diff = 100.0 * np.sum(red_mask) / (overlay_np.shape[0] * overlay_np.shape[1])
+            grid_size = reconstructor.cell_size
+            img_h, img_w = overlay_np.shape[:2]
+            grid_ratio = grid_size / min(img_h, img_w)
+            warnings = []
+            if percent_diff > 10.0:
+                warnings.append(f"High difference: {percent_diff:.1f}% pixels differ from input.")
+            if grid_ratio > 0.25:
+                warnings.append(f"Grid size {grid_size} is large relative to image size {min(img_h, img_w)}.")
+            if grid_size < 4:
+                warnings.append(f"Grid size {grid_size} is very small (may be noise).")
+
+            # Save debug grid detection plots
+            reconstructor.debug_grid_detection(save_dir="output/grid_debug")
 
             print(f"Saved: {output_path} and {overlay_path}")
-            if metrics["warnings"]:
-                print("  [WARN] " + " ".join(metrics["warnings"]))
+            if warnings:
+                print("  [WARN] " + " ".join(warnings))
             else:
                 print("  Output appears reasonable.")
-            if ml_applied:
-                print("  [INFO] ML suggestion applied.")
 
-            metrics_records.append(
-                {
-                    "image": image_file.name,
-                    "cell_size": metrics["cell_size"],
-                    "offset_x": metrics["offset"][0],
-                    "offset_y": metrics["offset"][1],
-                    "percent_diff": round(metrics["percent_diff"], 4),
-                    "grid_ratio": round(metrics["grid_ratio"], 4),
-                    "warnings": " | ".join(metrics["warnings"]) if metrics["warnings"] else "",
-                    "ml_used": "yes" if ml_applied else "no",
-                }
-            )
-
-        except Exception as e:  # pylint: disable=broad-except
+        except Exception as e:
             print(f"Error processing {image_file}: {e}")
-
-    if metrics_records:
-        metrics_path = output_dir / "metrics.csv"
-        with metrics_path.open("w", newline="") as csvfile:
-            fieldnames = [
-                "image",
-                "cell_size",
-                "offset_x",
-                "offset_y",
-                "percent_diff",
-                "grid_ratio",
-                "warnings",
-                "ml_used",
-            ]
-            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-            writer.writeheader()
-            writer.writerows(metrics_records)
-        print(f"\nMetrics written to {metrics_path}")
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Process all images with pixel reconstructor.")
-    parser.add_argument("--debug", action="store_true", help="Enable debug logging.")
-    parser.add_argument(
-        "--ml",
-        action="store_true",
-        help="Use ML suggestions to refine reconstructions when available.",
-    )
-    args = parser.parse_args()
-    process_all_images(debug=args.debug, use_ml=args.ml)
+    import sys
+    debug_mode = "--debug" in sys.argv
+    process_all_images(debug=debug_mode)

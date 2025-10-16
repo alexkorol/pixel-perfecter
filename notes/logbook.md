@@ -52,3 +52,16 @@ GPT 4.1 keeps asking too many unnecessary questions (stalling) instead of workin
 ## 2025-06-11 - Evening
 
 **Switched to Roo Code in VS Code and saw immediate results** Roo Code in boomerang mode using sonnet 3.7 was able to correctly iterate on the problem and get the project to a point where all 4 of my initial test input images converted to pixel art successfully. This was a major gamechanger and a milestone in the project. 
+
+## 2025-06-12 - Morning
+
+Focused on the ML track today. Added on-the-fly augmentation and noise injection inside `GridDataset` so training samples shake up color drift and blur similar to diffusion artifacts. Replaced the tiny conv stack with a residual CNN that includes squeeze-excite attention, plus dropout in the head. Updated the trainer to combine MSE and MAE with sample weighting, clamp gradients, and use safe AMP fallback. Inference helpers now fan out multiple cell/offset candidates with a scoring heuristic instead of a single rounded guess. Next session: rerun dataset prep with fresh feedback rows and capture training metrics once a longer GPU session is available.
+
+## 2025-06-12 - Afternoon
+
+Realised the CNN was fighting warped supervision because every sample was being forcibly squashed into 160×160 while the labels stayed in original pixel units. Swapped resize for `ImageOps.pad` so we preserve aspect ratio, scaled the labels by the same factor, and plumbed the per-sample scale tensor all the way into the metrics. Inference now rescales predictions back to the source image. Need to re-run the long training job with the new preprocessing and compare MAE/accuracy again.
+
+Ported the gradient-peak heuristic from Astropulse’s MIT pixeldetector into `ml/heuristics.py` (with attribution) and blended it into the suggestion ranking. Added `ml.analyze_predictions` to compare raw regression, heuristics, and combined top-k. Latest 32-epoch run lands at ~2.4 px MAE on cell size, ~3.7/3.9 px on offsets, and the blended suggestions hit within 1 px on ~25% of synthetic validation cases—huge jump from the ~2% we started with.
+## 2025-06-15 - Output Cleanup
+
+Archived the 74-image reconstruction run to `output/archive/2025-06-15/` (reconstructions, validation overlays, grid debug, metrics). Moved legacy experiments into `archive/` and added `notes/curated_samples.md` listing the fixed sanity-check set so future runs stay focused.
