@@ -2,6 +2,14 @@
 Unified Pixel Art Reconstruction Pipeline
 
 This module contains the consolidated, optimized pixel art reconstruction logic.
+
+Grid detection approach inspired by proper-pixel-art by Kenneth J. Allen
+(https://github.com/KennethJAllen/proper-pixel-art, MIT License).
+Key techniques adapted with attribution:
+- 2x nearest-neighbor upscaling before edge detection
+- Morphological closing to fill edge gaps
+- Hough transform for line detection
+- Line clustering and homogenization
 """
 
 import argparse
@@ -63,13 +71,14 @@ class PixelArtReconstructor:
     3. Artifact refinement using neighbor majority vote
     """
     
-    def __init__(self, image_path: str, debug=False):
+    def __init__(self, image_path: str, debug=False, use_hough=True):
         """
         Initialize with input image.
-        
+
         Args:
             image_path: Path to input image file
             debug: Enable debug logging
+            use_hough: Use Hough transform for grid detection (inspired by proper-pixel-art)
         """
         self.image_path = image_path
         self.image = None
@@ -77,7 +86,244 @@ class PixelArtReconstructor:
         self.offset = None
         self.grid_result = None
         self.debug = debug
-        
+        self.use_hough = use_hough
+
+    # -------------------------------------------------------------------------
+    # New methods inspired by proper-pixel-art (Kenneth J. Allen, MIT License)
+    # -------------------------------------------------------------------------
+
+    def _upscale_for_detection(self, image: np.ndarray, factor: int = 2) -> np.ndarray:
+        """
+        Upscale image using nearest-neighbor to clarify pixel boundaries.
+
+        This preprocessing step (from proper-pixel-art) makes edge detection
+        more reliable by amplifying the visual separation between pixels.
+
+        Args:
+            image: Input image as numpy array
+            factor: Upscale factor (default 2)
+
+        Returns:
+            Upscaled image
+        """
+        h, w = image.shape[:2]
+        return cv2.resize(image, (w * factor, h * factor), interpolation=cv2.INTER_NEAREST)
+
+    def _close_edges(self, edges: np.ndarray, kernel_size: int = 8) -> np.ndarray:
+        """
+        Apply morphological closing to fill small gaps in detected edges.
+
+        Adapted from proper-pixel-art. Closing = dilation followed by erosion,
+        which bridges small gaps while preserving overall edge structure.
+
+        Args:
+            edges: Binary edge image from Canny
+            kernel_size: Size of the rectangular structuring element
+
+        Returns:
+            Edge image with gaps filled
+        """
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (kernel_size, kernel_size))
+        closed = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel)
+        return closed
+
+    def _cluster_lines(self, lines: List[int], threshold: int = 4) -> List[int]:
+        """
+        Cluster nearby lines and return median of each cluster.
+
+        Adapted from proper-pixel-art. Groups lines within `threshold` pixels
+        of each other and replaces each group with its median value.
+
+        Args:
+            lines: List of line positions (x or y coordinates)
+            threshold: Maximum distance to consider lines as same cluster
+
+        Returns:
+            Clustered line positions
+        """
+        if not lines:
+            return []
+        lines = sorted(lines)
+        clusters = [[lines[0]]]
+        for p in lines[1:]:
+            if abs(p - clusters[-1][-1]) <= threshold:
+                clusters[-1].append(p)
+            else:
+                clusters.append([p])
+        return [int(np.median(cluster)) for cluster in clusters]
+
+    def _get_pixel_width(self, lines_x: List[int], lines_y: List[int],
+                         trim_fraction: float = 0.2) -> int:
+        """
+        Calculate pixel width using outlier-trimmed median of line spacings.
+
+        Adapted from proper-pixel-art. More robust than simple median by
+        excluding extreme values (bottom and top `trim_fraction`).
+
+        Args:
+            lines_x: Vertical line positions
+            lines_y: Horizontal line positions
+            trim_fraction: Fraction of outliers to trim from each end
+
+        Returns:
+            Estimated pixel width
+        """
+        gaps = []
+        if len(lines_x) > 1:
+            gaps.extend(np.diff(lines_x))
+        if len(lines_y) > 1:
+            gaps.extend(np.diff(lines_y))
+
+        if not gaps:
+            return 8  # Fallback
+
+        gaps = np.array(gaps)
+        low = np.percentile(gaps, 100 * trim_fraction)
+        high = np.percentile(gaps, 100 * (1 - trim_fraction))
+        middle = gaps[(gaps >= low) & (gaps <= high)]
+
+        if len(middle) == 0:
+            middle = gaps
+
+        return max(1, int(np.median(middle)))
+
+    def _homogenize_lines(self, lines: List[int], pixel_width: int) -> List[int]:
+        """
+        Fill in missing grid lines by subdividing gaps evenly.
+
+        Adapted from proper-pixel-art. When Hough detection misses some lines,
+        this fills them in based on the expected pixel width.
+
+        Args:
+            lines: Detected line positions
+            pixel_width: Expected spacing between lines
+
+        Returns:
+            Complete list of line positions with gaps filled
+        """
+        if len(lines) < 2 or pixel_width <= 0:
+            return lines
+
+        complete_lines = []
+        for i in range(len(lines) - 1):
+            start = lines[i]
+            end = lines[i + 1]
+            section_width = end - start
+            num_pixels = max(1, int(round(section_width / pixel_width)))
+            section_pixel_width = section_width / num_pixels
+
+            for n in range(num_pixels):
+                complete_lines.append(start + int(n * section_pixel_width))
+
+        complete_lines.append(lines[-1])
+        return complete_lines
+
+    def _detect_grid_hough(self, edges: np.ndarray) -> Tuple[List[int], List[int]]:
+        """
+        Detect grid lines using Probabilistic Hough Transform.
+
+        Adapted from proper-pixel-art. More direct approach than autocorrelation -
+        finds actual lines in the edge image rather than inferring periodicity.
+
+        Args:
+            edges: Binary edge image
+
+        Returns:
+            Tuple of (vertical_lines, horizontal_lines) as lists of positions
+        """
+        height, width = edges.shape
+        lines_x = [0, width - 1]  # Always include boundaries
+        lines_y = [0, height - 1]
+
+        # Hough parameters (tuned for pixel art grids)
+        hough_lines = cv2.HoughLinesP(
+            edges,
+            rho=1.0,
+            theta=np.deg2rad(1),
+            threshold=100,
+            minLineLength=50,
+            maxLineGap=10
+        )
+
+        if hough_lines is None:
+            if self.debug:
+                print("DEBUG: Hough transform found no lines")
+            return lines_x, lines_y
+
+        angle_threshold = np.deg2rad(15)
+
+        for line in hough_lines[:, 0]:
+            x1, y1, x2, y2 = line
+            dx, dy = x2 - x1, y2 - y1
+            angle = abs(np.arctan2(dy, dx))
+
+            # Near-vertical lines (for x positions)
+            if angle > np.deg2rad(90 - 15):
+                lines_x.append(round((x1 + x2) / 2))
+            # Near-horizontal lines (for y positions)
+            elif angle < angle_threshold:
+                lines_y.append(round((y1 + y2) / 2))
+
+        if self.debug:
+            print(f"DEBUG: Hough found {len(lines_x)-2} vertical, {len(lines_y)-2} horizontal lines")
+
+        # Cluster nearby lines
+        lines_x = self._cluster_lines(lines_x)
+        lines_y = self._cluster_lines(lines_y)
+
+        return lines_x, lines_y
+
+    def _detect_grid_parameters_hough(self) -> Tuple[int, Tuple[int, int]]:
+        """
+        Full Hough-based grid detection pipeline.
+
+        Implements the proper-pixel-art approach:
+        1. Upscale 2x for clearer boundaries
+        2. Canny edge detection
+        3. Morphological closing to fill gaps
+        4. Hough transform to find lines
+        5. Cluster lines, compute pixel width
+        6. Homogenize to fill missing lines
+
+        Returns:
+            Tuple of (cell_size, (x_offset, y_offset))
+        """
+        # Step 1: Upscale for detection
+        upscaled = self._upscale_for_detection(self.image, factor=2)
+
+        # Step 2: Edge detection
+        gray = cv2.cvtColor(upscaled, cv2.COLOR_RGB2GRAY)
+        edges = cv2.Canny(gray, 50, 200)  # proper-pixel-art uses (50, 200)
+
+        # Step 3: Morphological closing
+        closed_edges = self._close_edges(edges, kernel_size=8)
+
+        if self.debug:
+            print(f"DEBUG: Upscaled to {upscaled.shape[1]}x{upscaled.shape[0]}")
+            print(f"DEBUG: Edge pixels before closing: {np.sum(edges > 0)}")
+            print(f"DEBUG: Edge pixels after closing: {np.sum(closed_edges > 0)}")
+
+        # Step 4: Hough transform
+        lines_x, lines_y = self._detect_grid_hough(closed_edges)
+
+        # Step 5: Compute pixel width (in upscaled space)
+        pixel_width_upscaled = self._get_pixel_width(lines_x, lines_y)
+
+        # Step 6: Homogenize lines
+        lines_x = self._homogenize_lines(lines_x, pixel_width_upscaled)
+        lines_y = self._homogenize_lines(lines_y, pixel_width_upscaled)
+
+        if self.debug:
+            print(f"DEBUG: Pixel width (upscaled): {pixel_width_upscaled}")
+            print(f"DEBUG: Final grid: {len(lines_x)-1}x{len(lines_y)-1} cells")
+
+        # Convert back to original scale
+        cell_size = max(1, pixel_width_upscaled // 2)
+        offset_x = (lines_x[0] // 2) if lines_x else 0
+        offset_y = (lines_y[0] // 2) if lines_y else 0
+
+        return cell_size, (offset_x, offset_y)
+
     def run(self) -> np.ndarray:
         """
         Execute the grid detection and empirical pixel art reconstruction pipeline.
@@ -89,8 +335,12 @@ class PixelArtReconstructor:
         if self.image is None:
             raise ValueError(f"Could not load image: {self.image_path}")
 
-        print("Step 1: Detecting grid parameters (edge-projection peak analysis)...")
-        self.cell_size, self.offset = self._detect_grid_parameters()
+        if self.use_hough:
+            print("Step 1: Detecting grid parameters (Hough transform, proper-pixel-art approach)...")
+            self.cell_size, self.offset = self._detect_grid_parameters_hough()
+        else:
+            print("Step 1: Detecting grid parameters (edge-projection peak analysis)...")
+            self.cell_size, self.offset = self._detect_grid_parameters()
         print(f"  Detected cell size: {self.cell_size}, offset: {self.offset}")
 
         print("Step 2: Empirical pixel art reconstruction...")
@@ -899,8 +1149,14 @@ def _evaluate_with_parameters(
     }
 
 
-def process_all_images(debug: bool = False, use_ml: bool = False):
-    """Process all images in the input directory."""
+def process_all_images(debug: bool = False, use_ml: bool = False, use_hough: bool = True):
+    """Process all images in the input directory.
+
+    Args:
+        debug: Enable debug logging
+        use_ml: Use ML suggestions to refine reconstructions
+        use_hough: Use Hough transform for grid detection (proper-pixel-art approach)
+    """
     input_dir = Path("input")
     output_dir = Path("output")
     grid_debug_dir = output_dir / "grid_debug"
@@ -932,7 +1188,7 @@ def process_all_images(debug: bool = False, use_ml: bool = False):
 
     for image_file in image_files:
         try:
-            reconstructor = PixelArtReconstructor(str(image_file), debug=debug)
+            reconstructor = PixelArtReconstructor(str(image_file), debug=debug, use_hough=use_hough)
             result = reconstructor.run()
 
             overlay = create_validation_overlay(
@@ -1033,5 +1289,10 @@ if __name__ == "__main__":
         action="store_true",
         help="Use ML suggestions to refine reconstructions when available.",
     )
+    parser.add_argument(
+        "--no-hough",
+        action="store_true",
+        help="Disable Hough transform detection (use legacy autocorrelation method).",
+    )
     args = parser.parse_args()
-    process_all_images(debug=args.debug, use_ml=args.ml)
+    process_all_images(debug=args.debug, use_ml=args.ml, use_hough=not args.no_hough)
