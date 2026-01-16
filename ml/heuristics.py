@@ -1,9 +1,13 @@
 """
-Heuristic grid detection inspired by Astropulse/pixeldetector (MIT License).
+Heuristic grid detection using gradient peak spacing.
 
-The original project applies gradient peak spacing and per-tile color clustering
-to recover pixel-art grids. This module re-implements the core ideas with
-modifications suited for our pipeline while preserving attribution.
+This module provides an alternative grid detection approach using gradient
+analysis and peak spacing. For the primary Hough transform-based approach,
+see src/pixel_reconstructor.py which implements techniques inspired by
+proper-pixel-art by Kenneth J. Allen (https://github.com/KennethJAllen/proper-pixel-art).
+
+The gradient peak method here complements the Hough approach by providing
+a fallback that works well for images with consistent, uniform grids.
 """
 
 from __future__ import annotations
