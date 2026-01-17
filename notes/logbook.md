@@ -65,3 +65,21 @@ Ported the gradient-peak heuristic from Astropulse’s MIT pixeldetector into `m
 ## 2025-06-15 - Output Cleanup
 
 Archived the 74-image reconstruction run to `output/archive/2025-06-15/` (reconstructions, validation overlays, grid debug, metrics). Moved legacy experiments into `archive/` and added `notes/curated_samples.md` listing the fixed sanity-check set so future runs stay focused.
+
+## 2025-01-16 - External References Research
+
+Found and documented two key external projects for reference:
+
+1. **proper-pixel-art** by Kenneth J. Allen - https://github.com/KennethJAllen/proper-pixel-art
+   - Pure Python, mathematically rigorous approach using Hough transform + morphological ops
+   - Worth studying for the clean thinking process and first-principles approach
+   - This is the actual project to learn from (earlier "Astropulse/pixeldetector" reference was a placeholder)
+
+2. **unfake.js** by jenissimo - https://github.com/jenissimo/unfake.js
+   - Browser-based tool with real-time preview
+   - Uses runs-based/edge-aware scale detection + image-q for quantization
+   - Good UX patterns, also has Python port with Rust acceleration
+
+Added full details to `notes/insights.md` under "External References & Related Projects".
+
+**Next steps:** Study proper-pixel-art's approach and consider incorporating its Hough transform + median spacing technique while maintaining attribution.
