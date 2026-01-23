@@ -86,6 +86,8 @@ class PixelArtReconstructor:
         self.progress_callback: Optional[Callable[[int, int, str], None]] = None
         self.region_summaries: List[dict] = []
         self.mode: str = "global"
+        self.use_hough: bool = True  # Use Hough line detection by default
+        self._hough_confident: bool = False  # Track if Hough detection was confident
 
     def _report_progress(self, current: int, total: int, label: str) -> None:
         """Report refinement progress if a callback is registered."""
@@ -281,6 +283,133 @@ class PixelArtReconstructor:
         core_edges = cv2.bitwise_or(eroded, strong_edges)
         return gray, filtered, edges, core_edges
 
+    # ----------------------- Hough-based grid detection -----------------------
+
+    def _close_edges(self, edges: np.ndarray, kernel_size: int = 8) -> np.ndarray:
+        """Apply morphological closing to fill small gaps in edge map."""
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (kernel_size, kernel_size))
+        return cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel)
+
+    def _cluster_lines(self, lines: List[int], threshold: int = 4) -> List[int]:
+        """Merge lines within threshold pixels, return median of each cluster."""
+        if not lines:
+            return []
+
+        clusters = [[lines[0]]]
+        for line in lines[1:]:
+            if abs(line - clusters[-1][-1]) <= threshold:
+                clusters[-1].append(line)
+            else:
+                clusters.append([line])
+
+        return [int(np.median(cluster)) for cluster in clusters]
+
+    def _get_pixel_width_from_gaps(
+        self, lines_x: List[int], lines_y: List[int], trim_fraction: float = 0.2
+    ) -> int:
+        """Compute pixel width from median of line gaps with outlier filtering."""
+        gaps_x = np.diff(lines_x) if len(lines_x) > 1 else np.array([])
+        gaps_y = np.diff(lines_y) if len(lines_y) > 1 else np.array([])
+
+        if len(gaps_x) == 0 and len(gaps_y) == 0:
+            return 0
+
+        all_gaps = np.concatenate([g for g in [gaps_x, gaps_y] if len(g) > 0])
+
+        if len(all_gaps) == 0:
+            return 0
+
+        # Filter outliers (keep middle 60%)
+        low = np.percentile(all_gaps, trim_fraction * 100)
+        high = np.percentile(all_gaps, (1 - trim_fraction) * 100)
+        middle = all_gaps[(all_gaps >= low) & (all_gaps <= high)]
+
+        if len(middle) == 0:
+            middle = all_gaps
+
+        return int(np.median(middle))
+
+    def _detect_grid_lines_hough(self, edges: np.ndarray) -> Tuple[List[int], List[int]]:
+        """
+        Detect grid lines using Hough transform.
+        Returns (vertical_lines_x, horizontal_lines_y).
+        """
+        height, width = edges.shape
+
+        # Apply morphological closing to bridge edge gaps
+        closed = self._close_edges(edges, kernel_size=8)
+
+        # Hough line detection
+        lines = cv2.HoughLinesP(
+            closed, rho=1.0, theta=np.pi/180, threshold=100,
+            minLineLength=50, maxLineGap=10
+        )
+
+        # Initialize with image boundaries
+        lines_x = [0, width - 1]
+        lines_y = [0, height - 1]
+
+        if lines is None:
+            return lines_x, lines_y
+
+        # Classify lines by angle (vertical vs horizontal)
+        angle_threshold = np.deg2rad(15)
+        for x1, y1, x2, y2 in lines[:, 0]:
+            angle = abs(np.arctan2(y2 - y1, x2 - x1))
+            if angle > np.pi/2 - angle_threshold:  # Vertical line
+                lines_x.append(round((x1 + x2) / 2))
+            elif angle < angle_threshold:  # Horizontal line
+                lines_y.append(round((y1 + y2) / 2))
+
+        # Cluster nearby lines to remove duplicates
+        lines_x = self._cluster_lines(sorted(lines_x))
+        lines_y = self._cluster_lines(sorted(lines_y))
+
+        return lines_x, lines_y
+
+    def _find_dominant_period_hough(self, edges: np.ndarray) -> Tuple[int, float]:
+        """
+        Find grid cell size using Hough line detection.
+        Returns (cell_size, confidence) where confidence is 0-1.
+        """
+        lines_x, lines_y = self._detect_grid_lines_hough(edges)
+        height, width = edges.shape
+
+        # Check for trivial mesh (only boundary lines detected)
+        if len(lines_x) <= 3 and len(lines_y) <= 3:
+            if self.debug:
+                print("DEBUG: Hough detected trivial mesh (only boundaries)")
+            return 0, 0.0  # Signal failure
+
+        pixel_width = self._get_pixel_width_from_gaps(lines_x, lines_y)
+
+        if pixel_width < 4:
+            if self.debug:
+                print(f"DEBUG: Hough pixel width too small: {pixel_width}")
+            return 0, 0.0  # Too small to be valid
+
+        # Sanity check: if pixel_width would result in < 15 cells per dimension,
+        # Hough likely failed to detect the actual grid (e.g., sparse content on large canvas)
+        cells_x = width / pixel_width
+        cells_y = height / pixel_width
+        if cells_x < 15 and cells_y < 15:
+            if self.debug:
+                print(f"DEBUG: Hough pixel width {pixel_width} gives only {cells_x:.0f}x{cells_y:.0f} cells - suspicious, falling back")
+            return 0, 0.0  # Likely wrong
+
+        # Calculate confidence based on number of detected lines vs expected
+        total_lines = len(lines_x) + len(lines_y)
+        expected_lines = (width / max(pixel_width, 1)) + (height / max(pixel_width, 1))
+        confidence = min(1.0, total_lines / max(expected_lines * 0.5, 1))
+
+        if self.debug:
+            print(f"DEBUG: Hough detected {len(lines_x)} vertical, {len(lines_y)} horizontal lines")
+            print(f"DEBUG: Hough pixel width: {pixel_width}, confidence: {confidence:.2f}")
+
+        return pixel_width, confidence
+
+    # --------------------------------------------------------------------------
+
     def _detect_grid_parameters(self) -> Tuple[int, Tuple[int, int]]:
         """
         Detect grid cell size and offset using edge projection analysis.
@@ -303,20 +432,35 @@ class PixelArtReconstructor:
         
     def _find_dominant_period(self, edges: np.ndarray) -> int:
         """
-        Find dominant repeating pattern in edge projections.
-        
+        Find dominant repeating pattern using Hough (primary) or autocorrelation (fallback).
+
         Args:
             edges: Binary edge image
-            
+
         Returns:
             Estimated cell size in pixels
         """
         height, width = edges.shape
-        
+
+        # Try Hough-based detection first (if enabled)
+        if self.use_hough:
+            hough_period, hough_confidence = self._find_dominant_period_hough(edges)
+            if hough_period > 0 and hough_confidence > 0.3:
+                if self.debug:
+                    print(f"DEBUG: Using Hough-detected period: {hough_period} (confidence: {hough_confidence:.2f})")
+                # Mark as confident if high confidence - restrict refinement
+                self._hough_confident = hough_confidence > 0.5
+                return hough_period
+            if self.debug:
+                print("DEBUG: Hough detection failed or low confidence, falling back to autocorrelation")
+
+        self._hough_confident = False
+
+        # Fall back to autocorrelation approach
         # Project edges onto both axes
         h_projection = np.sum(edges, axis=0)  # Vertical edges
         v_projection = np.sum(edges, axis=1)  # Horizontal edges
-        
+
         if self.debug:
             print(f"DEBUG: Image dimensions: {width}x{height}")
             print(f"DEBUG: Edge projection sums - Horizontal: {np.sum(h_projection)}, Vertical: {np.sum(v_projection)}")
@@ -884,23 +1028,35 @@ class PixelArtReconstructor:
         candidates = set()
         candidates.add(max(4, base_size))
 
-        # Explore nearby sizes (+/- 12px) to capture harmonics/off-by-one cases.
-        for delta in range(-12, 13):
-            candidate = base_size + delta
-            if 4 <= candidate <= max_candidate:
-                candidates.add(candidate)
-
-        # Include divisors and multiples to handle harmonic mis-detections.
-        for divisor in (2, 3, 4):
-            if base_size % divisor == 0:
-                candidate = base_size // divisor
+        # When Hough detection was confident, restrict search to ±10% of base size
+        # This prevents refinement from picking wildly different sizes
+        if self._hough_confident:
+            # Narrow search: only ±10% of base size (at least ±2px)
+            delta_range = max(2, base_size // 10)
+            for delta in range(-delta_range, delta_range + 1):
+                candidate = base_size + delta
+                if 4 <= candidate <= max_candidate:
+                    candidates.add(candidate)
+            if self.debug:
+                print(f"DEBUG: Hough confident - restricted refinement to ±{delta_range}px around {base_size}")
+        else:
+            # Original behavior: explore nearby sizes (+/- 12px) to capture harmonics/off-by-one cases.
+            for delta in range(-12, 13):
+                candidate = base_size + delta
                 if 4 <= candidate <= max_candidate:
                     candidates.add(candidate)
 
-        for multiplier in (2, 3):
-            candidate = base_size * multiplier
-            if 4 <= candidate <= max_candidate:
-                candidates.add(candidate)
+            # Include divisors and multiples to handle harmonic mis-detections.
+            for divisor in (2, 3, 4):
+                if base_size % divisor == 0:
+                    candidate = base_size // divisor
+                    if 4 <= candidate <= max_candidate:
+                        candidates.add(candidate)
+
+            for multiplier in (2, 3):
+                candidate = base_size * multiplier
+                if 4 <= candidate <= max_candidate:
+                    candidates.add(candidate)
 
         ordered = sorted(candidates, key=lambda s: (abs(s - base_size), s))
         return ordered[: min(len(ordered), 15)]
