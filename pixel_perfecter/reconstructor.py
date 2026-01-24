@@ -87,7 +87,7 @@ class PixelArtReconstructor:
         self.region_summaries: List[dict] = []
         self.mode: str = "global"
         self.use_hough: bool = True  # Use Hough line detection by default
-        self._hough_confident: bool = False  # Track if Hough detection was confident
+        self._hough_confidence: float = 0.0  # Track actual Hough confidence (0-1)
         self.initial_upscale: int = 2  # Upscale factor for edge detection (1 = no upscale)
 
     def _report_progress(self, current: int, total: int, label: str) -> None:
@@ -330,10 +330,16 @@ class PixelArtReconstructor:
 
         return int(np.median(middle))
 
-    def _detect_grid_lines_hough(self, edges: np.ndarray) -> Tuple[List[int], List[int]]:
+    def _detect_grid_lines_hough(
+        self, edges: np.ndarray, cluster_threshold: int = 4
+    ) -> Tuple[List[int], List[int]]:
         """
         Detect grid lines using Hough transform.
         Returns (vertical_lines_x, horizontal_lines_y).
+
+        Args:
+            edges: Edge map (may be scaled)
+            cluster_threshold: Distance threshold for clustering nearby lines
         """
         height, width = edges.shape
 
@@ -363,8 +369,8 @@ class PixelArtReconstructor:
                 lines_y.append(round((y1 + y2) / 2))
 
         # Cluster nearby lines to remove duplicates
-        lines_x = self._cluster_lines(sorted(lines_x))
-        lines_y = self._cluster_lines(sorted(lines_y))
+        lines_x = self._cluster_lines(sorted(lines_x), threshold=cluster_threshold)
+        lines_y = self._cluster_lines(sorted(lines_y), threshold=cluster_threshold)
 
         return lines_x, lines_y
 
@@ -385,7 +391,9 @@ class PixelArtReconstructor:
         else:
             edges_scaled = edges
 
-        lines_x, lines_y = self._detect_grid_lines_hough(edges_scaled)
+        # Scale cluster threshold with upscale factor to maintain same effective distance
+        cluster_threshold = 4 * scale_factor
+        lines_x, lines_y = self._detect_grid_lines_hough(edges_scaled, cluster_threshold)
 
         # Check for trivial mesh (only boundary lines detected)
         if len(lines_x) <= 3 and len(lines_y) <= 3:
@@ -395,7 +403,8 @@ class PixelArtReconstructor:
 
         # Get pixel width in scaled coordinates, then convert back to original
         pixel_width_scaled = self._get_pixel_width_from_gaps(lines_x, lines_y)
-        pixel_width = max(1, pixel_width_scaled // scale_factor)
+        # Use round() instead of integer division to avoid systematic under-counting
+        pixel_width = max(1, round(pixel_width_scaled / scale_factor))
 
         if pixel_width < 4:
             if self.debug:
@@ -462,13 +471,13 @@ class PixelArtReconstructor:
             if hough_period > 0 and hough_confidence > 0.3:
                 if self.debug:
                     print(f"DEBUG: Using Hough-detected period: {hough_period} (confidence: {hough_confidence:.2f})")
-                # Mark as confident if high confidence - restrict refinement
-                self._hough_confident = hough_confidence > 0.5
+                # Store actual confidence for graduated refinement restriction
+                self._hough_confidence = hough_confidence
                 return hough_period
             if self.debug:
                 print("DEBUG: Hough detection failed or low confidence, falling back to autocorrelation")
 
-        self._hough_confident = False
+        self._hough_confidence = 0.0
 
         # Fall back to autocorrelation approach
         # Project edges onto both axes
@@ -1042,17 +1051,26 @@ class PixelArtReconstructor:
         candidates = set()
         candidates.add(max(4, base_size))
 
-        # When Hough detection was confident, restrict search to ±10% of base size
-        # This prevents refinement from picking wildly different sizes
-        if self._hough_confident:
-            # Narrow search: only ±10% of base size (at least ±2px)
+        # When Hough detection was confident, restrict refinement based on confidence level
+        # This prevents the refinement metric from favoring smaller cells (which keep halos)
+        if self._hough_confidence > 0.8:
+            # Very high confidence: only allow staying same or going slightly larger
+            # This prevents the common failure mode where refinement shrinks the cell size
+            for delta in range(0, 3):  # Only 0, +1, +2
+                candidate = base_size + delta
+                if 4 <= candidate <= max_candidate:
+                    candidates.add(candidate)
+            if self.debug:
+                print(f"DEBUG: Hough very confident ({self._hough_confidence:.2f}) - restricted to +0-2px around {base_size}")
+        elif self._hough_confidence > 0.5:
+            # Moderate confidence: allow ±10% of base size (at least ±2px)
             delta_range = max(2, base_size // 10)
             for delta in range(-delta_range, delta_range + 1):
                 candidate = base_size + delta
                 if 4 <= candidate <= max_candidate:
                     candidates.add(candidate)
             if self.debug:
-                print(f"DEBUG: Hough confident - restricted refinement to ±{delta_range}px around {base_size}")
+                print(f"DEBUG: Hough confident ({self._hough_confidence:.2f}) - restricted to ±{delta_range}px around {base_size}")
         else:
             # Original behavior: explore nearby sizes (+/- 12px) to capture harmonics/off-by-one cases.
             for delta in range(-12, 13):
