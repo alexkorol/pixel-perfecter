@@ -47,6 +47,8 @@ class BatchConfig:
     mode: str
     use_ml: bool
     debug: bool
+    use_hough: bool
+    initial_upscale: int
     overlay_mode: str
     save_overlays: bool
     grid_debug_dir: Optional[Path]
@@ -115,6 +117,8 @@ def _process_single_image(
     """Run the reconstruction pipeline for one image and persist artefacts."""
     try:
         reconstructor = PixelArtReconstructor(str(image_path), debug=cfg.debug)
+        reconstructor.use_hough = cfg.use_hough
+        reconstructor.initial_upscale = cfg.initial_upscale
         result = reconstructor.run(mode=cfg.mode)
     except Exception as exc:  # pylint: disable=broad-except
         print(f"[ERROR] Failed to process {image_path.name}: {exc}")
@@ -287,6 +291,18 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         help="Enable verbose debug logging during reconstruction.",
     )
     parser.add_argument(
+        "--no-hough",
+        action="store_true",
+        help="Disable Hough line detection (use autocorrelation only).",
+    )
+    parser.add_argument(
+        "--upscale",
+        type=int,
+        default=2,
+        choices=[1, 2, 3, 4],
+        help="Upscale factor for edge detection (1=none, 2=default, higher=better for fine grids).",
+    )
+    parser.add_argument(
         "--grid-debug",
         action="store_true",
         help="Export grid detection plots to <output>/grid_debug/.",
@@ -353,6 +369,8 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         mode=args.mode,
         use_ml=args.ml,
         debug=args.debug,
+        use_hough=not args.no_hough,
+        initial_upscale=args.upscale,
         overlay_mode=args.overlay_mode,
         save_overlays=not args.skip_overlays,
         grid_debug_dir=grid_debug_dir,
