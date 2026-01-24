@@ -88,6 +88,7 @@ class PixelArtReconstructor:
         self.mode: str = "global"
         self.use_hough: bool = True  # Use Hough line detection by default
         self._hough_confident: bool = False  # Track if Hough detection was confident
+        self.initial_upscale: int = 2  # Upscale factor for edge detection (1 = no upscale)
 
     def _report_progress(self, current: int, total: int, label: str) -> None:
         """Report refinement progress if a callback is registered."""
@@ -372,8 +373,19 @@ class PixelArtReconstructor:
         Find grid cell size using Hough line detection.
         Returns (cell_size, confidence) where confidence is 0-1.
         """
-        lines_x, lines_y = self._detect_grid_lines_hough(edges)
         height, width = edges.shape
+        scale_factor = self.initial_upscale if self.initial_upscale > 1 else 1
+
+        # Optionally upscale edges for better detection of fine grids
+        if scale_factor > 1:
+            edges_scaled = cv2.resize(edges, (width * scale_factor, height * scale_factor),
+                                      interpolation=cv2.INTER_NEAREST)
+            if self.debug:
+                print(f"DEBUG: Upscaled edges {scale_factor}x for Hough detection")
+        else:
+            edges_scaled = edges
+
+        lines_x, lines_y = self._detect_grid_lines_hough(edges_scaled)
 
         # Check for trivial mesh (only boundary lines detected)
         if len(lines_x) <= 3 and len(lines_y) <= 3:
@@ -381,11 +393,13 @@ class PixelArtReconstructor:
                 print("DEBUG: Hough detected trivial mesh (only boundaries)")
             return 0, 0.0  # Signal failure
 
-        pixel_width = self._get_pixel_width_from_gaps(lines_x, lines_y)
+        # Get pixel width in scaled coordinates, then convert back to original
+        pixel_width_scaled = self._get_pixel_width_from_gaps(lines_x, lines_y)
+        pixel_width = max(1, pixel_width_scaled // scale_factor)
 
         if pixel_width < 4:
             if self.debug:
-                print(f"DEBUG: Hough pixel width too small: {pixel_width}")
+                print(f"DEBUG: Hough pixel width too small: {pixel_width} (scaled: {pixel_width_scaled})")
             return 0, 0.0  # Too small to be valid
 
         # Sanity check: if pixel_width would result in < 15 cells per dimension,
@@ -399,12 +413,12 @@ class PixelArtReconstructor:
 
         # Calculate confidence based on number of detected lines vs expected
         total_lines = len(lines_x) + len(lines_y)
-        expected_lines = (width / max(pixel_width, 1)) + (height / max(pixel_width, 1))
-        confidence = min(1.0, total_lines / max(expected_lines * 0.5, 1))
+        expected_lines = cells_x + cells_y
+        confidence = min(1.0, total_lines / max(expected_lines * 0.5 * scale_factor, 1))
 
         if self.debug:
-            print(f"DEBUG: Hough detected {len(lines_x)} vertical, {len(lines_y)} horizontal lines")
-            print(f"DEBUG: Hough pixel width: {pixel_width}, confidence: {confidence:.2f}")
+            print(f"DEBUG: Hough detected {len(lines_x)} vertical, {len(lines_y)} horizontal lines (scale={scale_factor}x)")
+            print(f"DEBUG: Hough pixel width: {pixel_width} (scaled: {pixel_width_scaled}), confidence: {confidence:.2f}")
 
         return pixel_width, confidence
 
