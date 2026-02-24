@@ -40,3 +40,7 @@ notes/feedback_log.csv
 ml/data/
 ml/checkpoints/
 ml/runs/
+
+# Pipeline data (large, generated)
+data/
+test_output/
