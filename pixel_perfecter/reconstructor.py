@@ -1501,18 +1501,54 @@ class PixelArtReconstructor:
         original = self.image
         h, w = original.shape[:2]
         rec_up = cv2.resize(reconstruction, (w, h), interpolation=cv2.INTER_NEAREST)
+
+        # Compute both strict and tolerant diff contexts
         diff_ctx = _build_diff_context(original, rec_up, cell_size, offset)
         metrics = _compute_overlay_metrics(diff_ctx, cell_size, offset)
+
+        # Add tolerant diff (for AI-generated content with anti-aliasing)
+        diff_ctx_tolerant = _build_diff_context(
+            original, rec_up, cell_size, offset, tolerance=20
+        )
+        tolerant_metrics = _compute_overlay_metrics(diff_ctx_tolerant, cell_size, offset)
+        metrics["percent_diff_core_tolerant"] = tolerant_metrics["percent_diff_core"]
+        metrics["percent_diff_total_tolerant"] = tolerant_metrics["percent_diff_total"]
+
+        # Intra-cell variance: key quality metric for AI-generated pixel art
+        cell_variance = _compute_intra_cell_variance(original, cell_size, offset)
+        metrics["intra_cell_variance"] = cell_variance
+
         return metrics
 
     @staticmethod
     def _is_metrics_better(candidate: Optional[dict], current: Optional[dict]) -> bool:
-        """Determine if candidate metrics are preferable."""
+        """Determine if candidate metrics are preferable.
+
+        Uses intra-cell variance as the primary criterion (lower = better grid
+        fit), falling back to tolerant core diff and then strict core diff.
+        """
         if candidate is None:
             return False
         if current is None:
             return True
 
+        # Primary: intra-cell variance (lower = cells more uniform = better grid)
+        cand_var = candidate.get("intra_cell_variance", float("inf"))
+        curr_var = current.get("intra_cell_variance", float("inf"))
+        if cand_var < curr_var * 0.85:
+            return True
+        if cand_var > curr_var * 1.15:
+            return False
+
+        # Secondary: tolerant core diff
+        cand_tol = candidate.get("percent_diff_core_tolerant", float("inf"))
+        curr_tol = current.get("percent_diff_core_tolerant", float("inf"))
+        if cand_tol < curr_tol - 1.0:
+            return True
+        if cand_tol > curr_tol + 1.0:
+            return False
+
+        # Tertiary: strict core diff
         candidate_core = candidate.get("percent_diff_core", float("inf"))
         current_core = current.get("percent_diff_core", float("inf"))
 
@@ -1818,11 +1854,51 @@ class PixelArtReconstructor:
         return neighbors
 
 
+def _compute_intra_cell_variance(
+    original: np.ndarray, cell_size: int, offset: Tuple[int, int]
+) -> float:
+    """Compute mean intra-cell color variance as a grid quality metric.
+
+    Low variance means cells are internally uniform, indicating the grid
+    detection is correct.  This works well for AI-generated pixel art where
+    exact-pixel diff metrics are misleading due to anti-aliasing.
+
+    Returns:
+        Mean variance across all cells (lower = better grid fit).
+    """
+    h, w = original.shape[:2]
+    x_off, y_off = offset
+    cell_size = max(int(cell_size), 1)
+
+    variances = []
+    for y in range(y_off, h - cell_size + 1, cell_size):
+        for x in range(x_off, w - cell_size + 1, cell_size):
+            cell = original[y:y + cell_size, x:x + cell_size].astype(np.float32)
+            # Per-channel variance, averaged
+            var = float(np.mean(np.var(cell.reshape(-1, cell.shape[-1]), axis=0)))
+            variances.append(var)
+
+    if not variances:
+        return float("inf")
+    return float(np.mean(variances))
+
+
 def _build_diff_context(
-    original: np.ndarray, rec_up: np.ndarray, cell_size: int, offset: Tuple[int, int]
+    original: np.ndarray, rec_up: np.ndarray, cell_size: int, offset: Tuple[int, int],
+    tolerance: int = 0,
 ) -> Dict[str, np.ndarray]:
-    """Create masks that separate halo and core regions for diagnostics."""
-    diff = np.any(original != rec_up, axis=-1)
+    """Create masks that separate halo and core regions for diagnostics.
+
+    Args:
+        tolerance: Per-channel tolerance for considering a pixel as matching.
+            0 = exact match (legacy). Values 10-25 are typical for AI-generated
+            pixel art where anti-aliasing is expected.
+    """
+    if tolerance > 0:
+        channel_diff = np.abs(original.astype(np.int16) - rec_up.astype(np.int16))
+        diff = np.any(channel_diff > tolerance, axis=-1)
+    else:
+        diff = np.any(original != rec_up, axis=-1)
     h, w = diff.shape
     grid_mask = np.zeros_like(diff, dtype=bool)
     core_mask = np.zeros_like(diff, dtype=bool)
