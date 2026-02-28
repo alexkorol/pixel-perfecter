@@ -234,6 +234,7 @@ def ingest_dcss(
     styles: Optional[List[InputStyle]] = None,
     generate_prompt_files: bool = True,
     categories: Optional[List[str]] = None,
+    crawl_dir: Optional[Path] = None,
 ) -> int:
     """Ingest DCSS tiles into the pipeline.
 
@@ -245,10 +246,25 @@ def ingest_dcss(
         generate_prompt_files: Write prompt .txt files.
         categories: Only process these categories (e.g. ["mon", "item"]).
             Defaults to all.
+        crawl_dir: Optional path to crawl source for real game descriptions.
+            If provided, uses parsed descriptions instead of filename-derived ones.
 
     Returns:
         Number of tiles processed.
     """
+    # try to load real game descriptions
+    game_descriptions = None
+    if crawl_dir:
+        try:
+            from pipeline.crawl_descriptions import (
+                parse_all_descriptions,
+                _tile_path_to_search_names,
+                _normalize_name,
+            )
+            game_descriptions = parse_all_descriptions(crawl_dir)
+            logger.info("Loaded %d game descriptions from crawl source", len(game_descriptions))
+        except Exception as e:
+            logger.warning("Could not load game descriptions: %s", e)
     if styles is None:
         styles = [InputStyle.PHOTOREALISTIC, InputStyle.DIGITAL_PAINTING,
                   InputStyle.CONCEPT_ART]
@@ -313,12 +329,24 @@ def ingest_dcss(
         tags.facing = _detect_facing_from_path(str(rel_path))
         tags.animation_frame = _detect_animation_frame(str(rel_path))
 
-        # generate description from filename
+        # generate description — prefer real game descriptions if available
         description = _filename_to_description(str(rel_path))
+        caption_source = "dcss_path"
+
+        if game_descriptions:
+            search_names = _tile_path_to_search_names(str(rel_path))
+            for candidate in search_names:
+                norm = _normalize_name(candidate)
+                if norm in game_descriptions:
+                    gd = game_descriptions[norm]
+                    description = gd.description
+                    caption_source = "dcss_game"
+                    break
+
         caption = SpriteCaption(
             short_description=rel_path.stem.replace("_", " "),
             detailed_description=description,
-            source="dcss_path",
+            source=caption_source,
         )
 
         # generate prompts
@@ -383,6 +411,8 @@ def main():
                         help="Comma-separated generation styles")
     parser.add_argument("--no-prompts", action="store_true",
                         help="Skip prompt file generation")
+    parser.add_argument("--crawl-dir", default=None,
+                        help="Path to crawl source for real game descriptions")
     parser.add_argument("--debug", action="store_true")
 
     args = parser.parse_args()
@@ -401,6 +431,7 @@ def main():
         styles=styles,
         generate_prompt_files=not args.no_prompts,
         categories=args.categories,
+        crawl_dir=Path(args.crawl_dir) if args.crawl_dir else None,
     )
 
     return 0 if count > 0 else 1
