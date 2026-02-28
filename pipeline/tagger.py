@@ -329,6 +329,218 @@ def has_transparent_background(img: np.ndarray) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Subject type detection (heuristic, no VLM)
+# ---------------------------------------------------------------------------
+
+def detect_subject(img_1x: np.ndarray, source_name: str = "") -> SubjectType:
+    """Detect the subject type from the 1x pixel art image.
+
+    Uses heuristics based on:
+      - Image dimensions / aspect ratio
+      - Opaque region shape and fill ratio
+      - Source filename hints
+      - Color distribution patterns
+
+    Args:
+        img_1x: 1x resolution pixel art (RGB or RGBA).
+        source_name: Original filename for keyword hints.
+
+    Returns:
+        Best-guess SubjectType.
+    """
+    h, w = img_1x.shape[:2]
+    has_alpha = img_1x.shape[2] == 4
+
+    # --- Filename keyword hints (highest confidence) ---
+    name_lower = source_name.lower()
+    keyword_map = {
+        SubjectType.CHARACTER: [
+            "character", "player", "hero", "npc", "person", "avatar",
+            "warrior", "mage", "knight", "rogue", "wizard", "archer",
+            "human", "man", "woman", "girl", "boy",
+        ],
+        SubjectType.MONSTER: [
+            "monster", "enemy", "boss", "creature", "dragon", "slime",
+            "demon", "undead", "zombie", "skeleton", "beast", "goblin",
+            "orc", "troll", "wyvern", "giant",
+        ],
+        SubjectType.ITEM: [
+            "sword", "shield", "weapon", "armor", "potion", "item",
+            "boot", "boots", "helm", "helmet", "ring", "amulet",
+            "staff", "wand", "bow", "axe", "hammer", "gem", "key",
+            "coin", "gold", "treasure", "medal", "star",
+        ],
+        SubjectType.TILE: [
+            "tile", "floor", "wall", "ground", "terrain", "grass",
+            "stone", "brick", "wood", "water", "lava",
+        ],
+        SubjectType.ICON: [
+            "icon", "button", "ui_", "hud", "heart", "triangle",
+            "circle", "square", "smiley", "emoji",
+        ],
+        SubjectType.ENVIRONMENT: [
+            "tree", "house", "building", "castle", "bridge",
+            "mountain", "cloud", "sun", "moon", "rock",
+        ],
+        SubjectType.EFFECT: [
+            "effect", "particle", "explosion", "fire", "spark",
+            "smoke", "magic", "spell", "aura",
+        ],
+    }
+
+    for subject_type, keywords in keyword_map.items():
+        for kw in keywords:
+            if kw in name_lower:
+                return subject_type
+
+    # --- Shape-based heuristics ---
+    if has_alpha:
+        opaque = img_1x[:, :, 3] > 127
+    else:
+        # Use border color as background
+        rgb = img_1x[:, :, :3]
+        border = np.concatenate([rgb[0, :], rgb[-1, :], rgb[:, 0], rgb[:, -1]])
+        bg = np.median(border, axis=0).astype(np.uint8)
+        diff = np.sum(np.abs(rgb.astype(np.int16) - bg.astype(np.int16)), axis=2)
+        opaque = diff > 30
+
+    total_pixels = h * w
+    opaque_count = np.sum(opaque)
+    fill_ratio = opaque_count / total_pixels if total_pixels > 0 else 0
+    aspect_ratio = w / h if h > 0 else 1.0
+
+    # Find bounding box of opaque region
+    rows = np.any(opaque, axis=1)
+    cols = np.any(opaque, axis=0)
+    if not np.any(rows) or not np.any(cols):
+        return SubjectType.UNKNOWN
+
+    rmin, rmax = np.where(rows)[0][[0, -1]]
+    cmin, cmax = np.where(cols)[0][[0, -1]]
+    bbox_h = rmax - rmin + 1
+    bbox_w = cmax - cmin + 1
+    bbox_aspect = bbox_w / bbox_h if bbox_h > 0 else 1.0
+    bbox_fill = opaque_count / (bbox_h * bbox_w) if bbox_h * bbox_w > 0 else 0
+
+    # Tiles: fill most of the canvas uniformly
+    if fill_ratio > 0.85 and 0.8 < aspect_ratio < 1.2:
+        return SubjectType.TILE
+
+    # Icons: small, compact, often symmetric, high fill ratio
+    if max(h, w) <= 24 and bbox_fill > 0.5:
+        return SubjectType.ICON
+
+    # Characters/monsters: taller than wide, moderate fill
+    if bbox_aspect < 0.8 and bbox_h > 16:
+        return SubjectType.CHARACTER
+
+    # Items: small-ish objects, varied aspect ratios
+    if max(bbox_h, bbox_w) < 32 and fill_ratio < 0.5:
+        return SubjectType.ITEM
+
+    # Wide objects are often environment or UI
+    if bbox_aspect > 1.5:
+        return SubjectType.ENVIRONMENT
+
+    return SubjectType.UNKNOWN
+
+
+# ---------------------------------------------------------------------------
+# Facing direction detection (heuristic)
+# ---------------------------------------------------------------------------
+
+def detect_facing(img_1x: np.ndarray) -> FacingDirection:
+    """Detect facing direction from the 1x pixel art image.
+
+    Uses left/right asymmetry and vertical position of detail to infer
+    the facing direction.
+
+    Args:
+        img_1x: 1x resolution pixel art (RGB or RGBA).
+
+    Returns:
+        Best-guess FacingDirection.
+    """
+    h, w = img_1x.shape[:2]
+    if h < 4 or w < 4:
+        return FacingDirection.NA
+
+    has_alpha = img_1x.shape[2] == 4
+    rgb = img_1x[:, :, :3].astype(np.float32)
+
+    if has_alpha:
+        opaque = img_1x[:, :, 3] > 127
+    else:
+        border = np.concatenate([rgb[0, :], rgb[-1, :], rgb[:, 0], rgb[:, -1]])
+        bg = np.median(border.astype(np.float32), axis=0)
+        diff = np.sum(np.abs(rgb - bg), axis=2)
+        opaque = diff > 30
+
+    if not np.any(opaque):
+        return FacingDirection.NA
+
+    # Check symmetry: compare left half to flipped right half
+    mid_x = w // 2
+    if mid_x < 2:
+        return FacingDirection.NA
+
+    left_half = rgb[:, :mid_x]
+    right_half = np.flip(rgb[:, -mid_x:], axis=1)
+
+    left_opaque = opaque[:, :mid_x]
+    right_opaque = np.flip(opaque[:, -mid_x:], axis=1)
+
+    # Compare opaque regions
+    left_mass = np.sum(left_opaque)
+    right_mass = np.sum(right_opaque)
+    total_mass = left_mass + right_mass
+
+    if total_mass < 4:
+        return FacingDirection.NA
+
+    # Compute asymmetry
+    mass_asymmetry = (right_mass - left_mass) / total_mass if total_mass > 0 else 0
+
+    # Color difference between left and right (in opaque regions)
+    both_opaque = left_opaque & right_opaque
+    if np.sum(both_opaque) > 4:
+        color_diff = np.mean(np.abs(left_half[both_opaque] - right_half[both_opaque]))
+    else:
+        color_diff = 0
+
+    # High symmetry → front view
+    symmetry = 1.0 - (color_diff / 255.0) if color_diff < 255 else 0
+    if symmetry > 0.85 and abs(mass_asymmetry) < 0.1:
+        return FacingDirection.FRONT
+
+    # Check for top-down indicators: center of mass in the middle vertically
+    rows_with_content = np.where(np.any(opaque, axis=1))[0]
+    if len(rows_with_content) > 0:
+        vertical_center = np.mean(rows_with_content) / h
+        # Top-down sprites tend to have content evenly distributed
+        if abs(vertical_center - 0.5) < 0.1 and symmetry > 0.7:
+            return FacingDirection.TOP_DOWN
+
+    # Strong asymmetry → facing left or right
+    if abs(mass_asymmetry) > 0.1 or color_diff > 20:
+        # Determine which side has more "detail" (higher color variance)
+        left_var = np.var(rgb[:, :mid_x][left_opaque]) if left_mass > 0 else 0
+        right_var = np.var(rgb[:, -mid_x:][right_opaque]) if right_mass > 0 else 0
+
+        # Characters typically face the direction with more detail/mass
+        if mass_asymmetry > 0.05 or right_var > left_var * 1.2:
+            return FacingDirection.RIGHT
+        elif mass_asymmetry < -0.05 or left_var > right_var * 1.2:
+            return FacingDirection.LEFT
+
+    # Three-quarter view: slight asymmetry but front-ish
+    if 0.6 < symmetry < 0.85:
+        return FacingDirection.THREE_QUARTER
+
+    return FacingDirection.FRONT
+
+
+# ---------------------------------------------------------------------------
 # Main auto-tagger
 # ---------------------------------------------------------------------------
 
@@ -336,6 +548,7 @@ def auto_tag(
     img_1x: np.ndarray,
     grid_size: int,
     source_set: str = "",
+    source_name: str = "",
 ) -> AssetTags:
     """Automatically tag a cleaned pixel art sprite.
 
@@ -343,6 +556,7 @@ def auto_tag(
         img_1x: The 1x (native resolution) pixel art image, RGB or RGBA.
         grid_size: The detected grid cell size.
         source_set: Name of the source tileset (e.g. "dcss", "lpc").
+        source_name: Original filename (used for keyword-based subject hints).
 
     Returns:
         AssetTags with all detectable fields populated.
@@ -362,6 +576,10 @@ def auto_tag(
     # transparency
     transparent = has_transparent_background(img_1x)
 
+    # subject and facing (heuristic-based)
+    subject = detect_subject(img_1x, source_name=source_name)
+    facing = detect_facing(img_1x)
+
     tags = AssetTags(
         grid_size=grid_size,
         palette_count=len(palette),
@@ -369,8 +587,8 @@ def auto_tag(
         palette_name=palette_name,
         outline=outline,
         shading=shading,
-        subject=SubjectType.UNKNOWN,  # requires VLM
-        facing=FacingDirection.NA,    # requires VLM
+        subject=subject,
+        facing=facing,
         source_set=source_set,
         width_cells=w,
         height_cells=h,
