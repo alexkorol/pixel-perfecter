@@ -291,12 +291,33 @@ class TileMatch:
     keep: Optional[bool] = None     # user curation decision
 
 
+def _preferred_desc_categories(tile_category: str) -> List[str]:
+    """Return description source files that are most relevant for a tile category.
+
+    This prevents cross-domain noise (e.g. dngn altar tiles matching monster
+    descriptions instead of feature descriptions).
+    """
+    mapping = {
+        "dngn": ["features"],
+        "item": ["items", "unrand"],
+        "mon": ["monsters", "unrand"],
+        "player": ["monsters", "items"],  # player tiles sometimes match gear/race names
+        "effect": ["spells"],
+        "gui": [],  # no strong preference
+        "misc": [],
+    }
+    return mapping.get(tile_category, [])
+
+
 def match_tiles_to_descriptions(
     tiles_dir: Path,
     descriptions: Dict[str, GameDescription],
     categories: Optional[List[str]] = None,
 ) -> List[TileMatch]:
     """Match tile files to game descriptions.
+
+    Uses category-aware matching to prefer same-domain descriptions
+    (e.g. dngn tiles prefer features.txt, mon tiles prefer monsters.txt).
 
     Returns a list of TileMatch objects sorted by category and name.
     """
@@ -317,7 +338,7 @@ def match_tiles_to_descriptions(
         if categories and top_cat not in categories:
             continue
 
-        # skip UNUSED, gui, effect (less useful for training)
+        # skip UNUSED
         if top_cat in ("UNUSED",):
             continue
 
@@ -340,6 +361,9 @@ def match_tiles_to_descriptions(
         if tile_w < 16 or tile_h < 16 or tile_w > 128 or tile_h > 128:
             continue
 
+        # determine preferred description categories for this tile
+        preferred_cats = _preferred_desc_categories(top_cat)
+
         # try to match
         search_names = _tile_path_to_search_names(rel_path)
         best_match = None
@@ -358,8 +382,11 @@ def match_tiles_to_descriptions(
 
             # try prefix match (description name starts with our candidate)
             for key, desc in descriptions.items():
+                # for prefix/fuzzy, prefer same-domain descriptions
+                domain_bonus = 0.05 if (preferred_cats and desc.category in preferred_cats) else 0.0
+
                 if key.startswith(norm) and len(norm) > 3:
-                    score = len(norm) / len(key)
+                    score = len(norm) / len(key) + domain_bonus
                     if score > best_score and score > 0.6:
                         best_match = desc
                         best_score = score
@@ -367,21 +394,32 @@ def match_tiles_to_descriptions(
 
                 # also try if our candidate starts with the description name
                 if norm.startswith(key) and len(key) > 3:
-                    score = len(key) / len(norm)
+                    score = len(key) / len(norm) + domain_bonus
                     if score > best_score and score > 0.6:
                         best_match = desc
                         best_score = score
                         best_type = "prefix"
 
-        # fuzzy match as last resort
+        # fuzzy match as last resort — but stricter
         if best_score < 0.6:
             primary_name = _normalize_name(search_names[0])
-            for key, desc in descriptions.items():
-                score = _fuzzy_score(primary_name, key)
-                if score > best_score and score > 0.65:
-                    best_match = desc
-                    best_score = score
-                    best_type = "fuzzy"
+            # require at least 2 tokens for fuzzy matching to avoid
+            # single-word noise (e.g. "frozen" matching "frozen archway")
+            primary_tokens = primary_name.split()
+
+            if len(primary_tokens) >= 2 or len(primary_name) >= 6:
+                for key, desc in descriptions.items():
+                    # category-aware: penalize cross-domain fuzzy matches
+                    if preferred_cats and desc.category not in preferred_cats:
+                        penalty = 0.15
+                    else:
+                        penalty = 0.0
+
+                    score = _fuzzy_score(primary_name, key) - penalty
+                    if score > best_score and score > 0.70:
+                        best_match = desc
+                        best_score = score
+                        best_type = "fuzzy"
 
         if best_match:
             matches.append(TileMatch(
@@ -392,7 +430,7 @@ def match_tiles_to_descriptions(
                 category=top_cat,
                 subcategory=subcategory,
                 match_type=best_type,
-                match_score=best_score,
+                match_score=min(best_score, 1.0),
                 is_variant=is_variant,
                 variant_num=variant_num,
                 tile_width=tile_w,
