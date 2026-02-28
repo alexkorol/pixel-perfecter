@@ -1,26 +1,28 @@
 """Unified CLI for the pixel art dataset pipeline.
 
 Usage:
-    python -m pipeline.cli extract   <input> -o <output>  [--strategy auto|grid|contours|components]
-    python -m pipeline.cli clean     <input> -o <output>  [--max-core-diff 8.0]
-    python -m pipeline.cli tag       <input>              [--source-set dcss] [--grid-size 32]
-    python -m pipeline.cli caption   <input>              [--backend claude|openai|local|manual]
-    python -m pipeline.cli prompts   <manifest> -o <dir>  [--styles photo,painting,concept]
-    python -m pipeline.cli generate  <manifest> -o <dir>  [--backend comfyui|a1111|openai|replicate]
-    python -m pipeline.cli package   <manifest> -o <dir>  [--val-ratio 0.1] [--test-ratio 0.1]
-    python -m pipeline.cli train     --manifest <path> --generated-dir <dir>  [--config config.json]
-    python -m pipeline.cli run       <input> -o <output>  [--source-set dcss]  # full pipeline
+    python -m pipeline.cli extract           <input> -o <output>  [--strategy auto|grid|contours|components]
+    python -m pipeline.cli clean             <input> -o <output>  [--max-core-diff 8.0]
+    python -m pipeline.cli tag               <input>              [--source-set dcss] [--grid-size 32]
+    python -m pipeline.cli caption           <input>              [--backend claude|openai|local|manual]
+    python -m pipeline.cli prompts           <manifest> -o <dir>  [--styles photo,painting,concept]
+    python -m pipeline.cli generate          <manifest> -o <dir>  [--backend comfyui|a1111|openai|replicate]
+    python -m pipeline.cli package           <manifest> -o <dir>  [--val-ratio 0.1] [--test-ratio 0.1]
+    python -m pipeline.cli train             --manifest <path> --generated-dir <dir>  [--config config.json]
+    python -m pipeline.cli crawl-descriptions -o <dir>  [--fetch | --tiles-dir <path> --crawl-dir <path>]
+    python -m pipeline.cli run               <input> -o <output>  [--source-set dcss]  # full pipeline
 
 Each subcommand corresponds to a pipeline stage:
-  extract  — Split sprite sheets/showcases into individual sprites
-  clean    — Pixel-perfect reconstruction of extracted sprites
-  tag      — Auto-detect metadata tags for cleaned sprites
-  caption  — Describe sprites using a VLM for accurate prompt generation
-  prompts  — Generate unpixelization prompts for pair creation
-  generate — Generate high-res counterpart images from prompts
-  package  — Assemble final training dataset from completed pairs
-  train    — Train a pixelization model (LoRA) on the packaged dataset
-  run      — Run extract → clean → tag → caption → prompts in sequence
+  extract           — Split sprite sheets/showcases into individual sprites
+  clean             — Pixel-perfect reconstruction of extracted sprites
+  tag               — Auto-detect metadata tags for cleaned sprites
+  caption           — Describe sprites using a VLM for accurate prompt generation
+  prompts           — Generate unpixelization prompts for pair creation
+  generate          — Generate high-res counterpart images from prompts
+  package           — Assemble final training dataset from completed pairs
+  train             — Train a pixelization model (LoRA) on the packaged dataset
+  crawl-descriptions — Datamine DCSS tiles + descriptions → curation gallery
+  run               — Run extract → clean → tag → caption → prompts in sequence
 """
 
 import argparse
@@ -323,6 +325,28 @@ def cmd_package(args):
 
     logger.info("Dataset stats: %s", json.dumps(stats.to_dict(), indent=2))
     return 0
+
+
+# ---- Subcommand: crawl-descriptions ----
+
+def cmd_crawl_descriptions(args):
+    from pipeline.crawl_descriptions import main as crawl_main
+
+    crawl_argv = ["-o", args.output]
+    if args.tiles_dir:
+        crawl_argv.extend(["--tiles-dir", args.tiles_dir])
+    if args.crawl_dir:
+        crawl_argv.extend(["--crawl-dir", args.crawl_dir])
+    if args.fetch:
+        crawl_argv.append("--fetch")
+    if args.categories:
+        crawl_argv.extend(["--categories"] + args.categories)
+    if args.no_embed:
+        crawl_argv.append("--no-embed")
+    if args.selections:
+        crawl_argv.extend(["--selections", args.selections])
+
+    return crawl_main(crawl_argv)
 
 
 # ---- Subcommand: run (full pipeline) ----
@@ -630,6 +654,25 @@ def build_parser() -> argparse.ArgumentParser:
     p_train.add_argument("--dry-run", action="store_true",
                          help="Print config without training")
     p_train.set_defaults(func=cmd_train)
+
+    # -- crawl-descriptions --
+    p_crawl = sub.add_parser("crawl-descriptions",
+                              help="Datamine DCSS tile-description pairs for curation")
+    p_crawl.add_argument("-o", "--output", required=True,
+                         help="Output directory")
+    p_crawl.add_argument("--tiles-dir", default=None,
+                         help="Path to DCSS tiles release dir")
+    p_crawl.add_argument("--crawl-dir", default=None,
+                         help="Path to crawl source (for description files)")
+    p_crawl.add_argument("--fetch", action="store_true",
+                         help="Auto-clone tiles + crawl repos")
+    p_crawl.add_argument("--categories", nargs="+", default=None,
+                         help="Only these tile categories (e.g. item mon)")
+    p_crawl.add_argument("--no-embed", action="store_true",
+                         help="Don't embed images in HTML gallery")
+    p_crawl.add_argument("--selections", default=None,
+                         help="Path to curation selections JSON to apply")
+    p_crawl.set_defaults(func=cmd_crawl_descriptions)
 
     # -- run (full pipeline) --
     p_run = sub.add_parser("run",

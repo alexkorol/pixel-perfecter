@@ -258,7 +258,7 @@ class TestCLI:
         assert subparsers is not None
         choices = list(subparsers.choices.keys())
         expected = ["extract", "clean", "tag", "caption", "prompts",
-                    "generate", "package", "train", "run"]
+                    "generate", "package", "train", "crawl-descriptions", "run"]
         for cmd in expected:
             assert cmd in choices, f"Missing CLI subcommand: {cmd}"
 
@@ -377,3 +377,324 @@ class TestEndToEnd:
                     # Verify tags can be deserialized
                     tags = AssetTags.from_dict(entry["tags"])
                     assert tags.grid_size > 0
+
+
+# ---------------------------------------------------------------------------
+# Tests: DCSS crawl descriptions
+# ---------------------------------------------------------------------------
+
+class TestCrawlDescriptions:
+    """Tests for parsing DCSS description files and matching tiles."""
+
+    SAMPLE_ITEMS_TXT = textwrap.dedent("""\
+        %%%%
+        long sword
+
+        A sword with a long, slashing blade. An excellent all-round weapon,
+        popular with adventurers of all sorts.
+        %%%%
+        potion of curing
+
+        A potion which heals some wounds, clears confusion, and removes
+        poisoning, and slowing.
+        %%%%
+        scroll of identify
+
+        This useful scroll identifies the properties of any
+        item in the reader's inventory.
+        %%%%
+        # TAG_MAJOR_VERSION == 34
+        ring of sustain abilities
+
+        This ring provides sustenance for the wearer's abilities.
+        %%%%
+        amulet of faith
+
+        A talisman of devotion, empowering the prayerful.
+        %%%%
+    """)
+
+    SAMPLE_MONSTERS_TXT = textwrap.dedent("""\
+        %%%%
+        shadow demon
+
+        A demon that stalks in the shadows, preferring to attack from
+        the darkness.
+        %%%%
+        acid blob
+
+        A lump of sickly pustulent flesh, dripping with lethal acid.
+        %%%%
+    """)
+
+    SAMPLE_UNRAND_TXT = textwrap.dedent("""\
+        %%%%
+        Singing Sword
+
+        An enchanted blade which loves nothing more than to sing to its owner,
+        whether they want it to or not.
+        %%%%
+    """)
+
+    def _create_description_files(self, tmp_path):
+        """Create mock DCSS description files."""
+        descript_dir = tmp_path / "crawl-ref" / "source" / "dat" / "descript"
+        descript_dir.mkdir(parents=True)
+
+        (descript_dir / "items.txt").write_text(self.SAMPLE_ITEMS_TXT)
+        (descript_dir / "monsters.txt").write_text(self.SAMPLE_MONSTERS_TXT)
+        (descript_dir / "unrand.txt").write_text(self.SAMPLE_UNRAND_TXT)
+
+        return tmp_path
+
+    def _create_mock_tiles(self, tmp_path):
+        """Create mock tile PNG files."""
+        tiles_dir = tmp_path / "tiles"
+
+        tile_paths = [
+            "item/weapon/long_sword1.png",
+            "item/weapon/long_sword2.png",
+            "item/potion/i-curing.png",
+            "item/scroll/i-identify.png",
+            "item/amulet/faith.png",
+            "mon/demons/shadow_demon.png",
+            "mon/amorphous/acid_blob.png",
+            "item/weapon/triple_sword.png",  # no match expected
+        ]
+
+        for rel in tile_paths:
+            p = tiles_dir / rel
+            p.parent.mkdir(parents=True, exist_ok=True)
+            # create a 32x32 test image
+            Image.new("RGBA", (32, 32), (100, 100, 100, 255)).save(p)
+
+        return tiles_dir
+
+    def test_parse_description_file(self, tmp_path):
+        from pipeline.crawl_descriptions import parse_description_file
+
+        filepath = tmp_path / "items.txt"
+        filepath.write_text(self.SAMPLE_ITEMS_TXT)
+
+        entries = parse_description_file(filepath)
+        assert len(entries) >= 4
+        names = [e.name for e in entries]
+        assert "long sword" in names
+        assert "potion of curing" in names
+        assert "scroll of identify" in names
+
+    def test_parse_strips_lua_blocks(self, tmp_path):
+        from pipeline.crawl_descriptions import parse_description_file
+
+        content = textwrap.dedent("""\
+            %%%%
+            crystal ball
+
+            A magical sphere.
+            {{ if you.race() == "Djinni" then return "Useless." end }}
+            Very shiny.
+            %%%%
+        """)
+        filepath = tmp_path / "test.txt"
+        filepath.write_text(content)
+
+        entries = parse_description_file(filepath)
+        assert len(entries) == 1
+        assert "{{" not in entries[0].description
+        assert "Djinni" not in entries[0].description
+
+    def test_parse_all_descriptions(self, tmp_path):
+        from pipeline.crawl_descriptions import parse_all_descriptions
+
+        crawl_dir = self._create_description_files(tmp_path)
+        descriptions = parse_all_descriptions(crawl_dir)
+
+        assert len(descriptions) >= 7
+        assert "long sword" in descriptions
+        assert "shadow demon" in descriptions
+        assert "singing sword" in descriptions
+
+    def test_normalize_name(self):
+        from pipeline.crawl_descriptions import _normalize_name
+
+        assert _normalize_name("long sword") == "long sword"
+        assert _normalize_name("Long_Sword") == "long sword"
+        assert _normalize_name("A long sword") == "long sword"
+        assert _normalize_name("long_sword1") == "long sword"
+        assert _normalize_name("  long  sword  ") == "long sword"
+
+    def test_tile_path_to_search_names(self):
+        from pipeline.crawl_descriptions import _tile_path_to_search_names
+
+        # weapon
+        names = _tile_path_to_search_names("item/weapon/long_sword1.png")
+        assert "long sword" in names
+
+        # potion with i- prefix
+        names = _tile_path_to_search_names("item/potion/i-curing.png")
+        assert "curing" in names
+        assert "potion of curing" in names
+
+        # scroll
+        names = _tile_path_to_search_names("item/scroll/i-identify.png")
+        assert "identify" in names
+        assert "scroll of identify" in names
+
+        # monster
+        names = _tile_path_to_search_names("mon/demons/shadow_demon.png")
+        assert "shadow demon" in names
+
+    def test_match_tiles_to_descriptions(self, tmp_path):
+        from pipeline.crawl_descriptions import (
+            parse_all_descriptions,
+            match_tiles_to_descriptions,
+        )
+
+        crawl_dir = self._create_description_files(tmp_path)
+        tiles_dir = self._create_mock_tiles(tmp_path)
+
+        descriptions = parse_all_descriptions(crawl_dir)
+        matches = match_tiles_to_descriptions(tiles_dir, descriptions)
+
+        # should match most tiles
+        matched_names = {m.game_name for m in matches}
+        assert "long sword" in matched_names
+        assert "shadow demon" in matched_names
+
+        # check match types
+        exact_matches = [m for m in matches if m.match_type == "exact"]
+        assert len(exact_matches) >= 3
+
+    def test_match_detects_variants(self, tmp_path):
+        from pipeline.crawl_descriptions import (
+            parse_all_descriptions,
+            match_tiles_to_descriptions,
+        )
+
+        crawl_dir = self._create_description_files(tmp_path)
+        tiles_dir = self._create_mock_tiles(tmp_path)
+
+        descriptions = parse_all_descriptions(crawl_dir)
+        matches = match_tiles_to_descriptions(tiles_dir, descriptions)
+
+        # long_sword2 should be marked as variant
+        sword_matches = [m for m in matches if "long_sword" in m.tile_path]
+        variants = [m for m in sword_matches if m.is_variant]
+        assert len(variants) >= 1
+
+    def test_fuzzy_score(self):
+        from pipeline.crawl_descriptions import _fuzzy_score
+
+        # identical
+        assert _fuzzy_score("shadow demon", "shadow demon") == 1.0
+        # partial overlap
+        score = _fuzzy_score("acid blob", "acid blob monster")
+        assert 0.5 < score < 1.0
+        # no overlap
+        assert _fuzzy_score("sword", "dragon") == 0.0
+        # empty
+        assert _fuzzy_score("", "test") == 0.0
+
+    def test_generate_curation_gallery(self, tmp_path):
+        from pipeline.crawl_descriptions import (
+            parse_all_descriptions,
+            match_tiles_to_descriptions,
+            generate_curation_gallery,
+        )
+
+        crawl_dir = self._create_description_files(tmp_path)
+        tiles_dir = self._create_mock_tiles(tmp_path)
+
+        descriptions = parse_all_descriptions(crawl_dir)
+        matches = match_tiles_to_descriptions(tiles_dir, descriptions)
+
+        gallery_path = tmp_path / "gallery.html"
+        result = generate_curation_gallery(matches, gallery_path)
+
+        assert result == gallery_path
+        assert gallery_path.exists()
+
+        html = gallery_path.read_text()
+        assert "DCSS Tile Curation Gallery" in html
+        assert "long sword" in html
+        assert "shadow demon" in html
+
+        # check JSON sidecar was created
+        json_path = gallery_path.with_suffix(".json")
+        assert json_path.exists()
+        data = json.loads(json_path.read_text())
+        assert len(data) >= 3
+
+    def test_apply_curation(self, tmp_path):
+        from pipeline.crawl_descriptions import (
+            TileMatch, apply_curation,
+        )
+
+        matches = [
+            TileMatch(
+                tile_path="item/weapon/sword.png",
+                tile_abs_path="/fake/sword.png",
+                game_name="sword", description="A sword.",
+                category="item", subcategory="weapon",
+                match_type="exact", match_score=1.0,
+            ),
+            TileMatch(
+                tile_path="item/weapon/club.png",
+                tile_abs_path="/fake/club.png",
+                game_name="club", description="A club.",
+                category="item", subcategory="weapon",
+                match_type="exact", match_score=1.0,
+            ),
+        ]
+
+        selections = {"item/weapon/sword.png": True, "item/weapon/club.png": False}
+        sel_path = tmp_path / "selections.json"
+        sel_path.write_text(json.dumps(selections))
+
+        curated = apply_curation(matches, sel_path)
+        assert len(curated) == 1
+        assert curated[0].game_name == "sword"
+
+    def test_export_curated_pairs(self, tmp_path):
+        from pipeline.crawl_descriptions import (
+            TileMatch, export_curated_pairs,
+        )
+
+        # create a real tile file
+        tile_dir = tmp_path / "tiles" / "item" / "weapon"
+        tile_dir.mkdir(parents=True)
+        tile_path = tile_dir / "sword.png"
+        Image.new("RGBA", (32, 32), (200, 100, 50, 255)).save(tile_path)
+
+        curated = [
+            TileMatch(
+                tile_path="item/weapon/sword.png",
+                tile_abs_path=str(tile_path),
+                game_name="sword", description="A mighty sword.",
+                category="item", subcategory="weapon",
+                match_type="exact", match_score=1.0,
+                tile_width=32, tile_height=32,
+                keep=True,
+            ),
+        ]
+
+        output_dir = tmp_path / "output"
+        manifest_path = export_curated_pairs(curated, output_dir)
+
+        assert manifest_path.exists()
+        with open(manifest_path) as f:
+            entries = [json.loads(line) for line in f if line.strip()]
+        assert len(entries) == 1
+        assert entries[0]["game_name"] == "sword"
+        assert entries[0]["description"] == "A mighty sword."
+
+        # check tile was copied
+        assert (output_dir / "tiles" / "item" / "weapon" / "sword.png").exists()
+
+    def test_cli_subcommand_registered(self):
+        from pipeline.cli import build_parser
+
+        parser = build_parser()
+        for action in parser._actions:
+            if hasattr(action, '_parser_class'):
+                assert "crawl-descriptions" in action.choices
