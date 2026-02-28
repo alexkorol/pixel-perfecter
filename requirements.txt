@@ -1,9 +1,28 @@
+# Core
 numpy>=1.21.0
 opencv-python>=4.5.0
 Pillow>=8.3.0
 scipy>=1.7.0
 matplotlib>=3.4.0
+
+# GUI (optional — install only if using the interactive tool)
 PySide6>=6.5.0
+
+# ML grid estimator
 torch>=2.3.0
 torchvision>=0.18.0
 tensorboard>=2.11.0
+
+# Training (install for model fine-tuning)
+# diffusers>=0.27.0
+# transformers>=4.38.0
+# accelerate>=0.27.0
+# peft>=0.9.0
+# bitsandbytes>=0.43.0   # optional, for 8-bit Adam
+
+# VLM captioning (install the one you need)
+# anthropic>=0.25.0       # for Claude captioning
+# openai>=1.12.0          # for OpenAI captioning
+
+# Image generation (install the one you need)
+# replicate>=0.25.0       # for Replicate API
