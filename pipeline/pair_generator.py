@@ -238,24 +238,30 @@ def caption_placeholder(sprite_name: str) -> SpriteCaption:
     )
 
 
-# VLM integration stub — implement with your preferred VLM
 def caption_with_vlm(image_path: str, model: str = "default") -> SpriteCaption:
     """Generate a caption using a vision-language model.
 
-    This is a stub. Implement with your VLM of choice:
-    - Local: LLaVA, CogVLM, InternVL
-    - API: GPT-4V, Gemini Pro Vision, Claude
+    Delegates to pipeline.captioner which supports multiple backends:
+    - Claude (Anthropic API) — default
+    - OpenAI (GPT-4o)
+    - Local (ollama with llava)
+    - Manual (sidecar JSON)
 
-    The VLM should be prompted:
-      "Describe this pixel art sprite in detail. Include: what it depicts,
-       the pose/orientation, all equipment/accessories, colour palette,
-       and any distinctive features. Be precise — this description will
-       be used to recreate the subject as a high-resolution illustration."
+    See pipeline/captioner.py for configuration details.
     """
-    raise NotImplementedError(
-        "VLM captioning not yet configured. Set up a vision model or "
-        "use caption_from_game_data() / manual captions."
-    )
+    from pipeline.captioner import caption_sprite
+    import numpy as np
+    from PIL import Image
+
+    pil = Image.open(image_path)
+    if pil.mode == "RGBA":
+        img = np.array(pil)
+    elif pil.mode == "P":
+        img = np.array(pil.convert("RGBA"))
+    else:
+        img = np.array(pil.convert("RGB"))
+
+    return caption_sprite(img, source_path=image_path)
 
 
 # ---------------------------------------------------------------------------

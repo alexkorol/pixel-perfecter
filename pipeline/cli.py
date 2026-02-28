@@ -4,17 +4,23 @@ Usage:
     python -m pipeline.cli extract   <input> -o <output>  [--strategy auto|grid|contours|components]
     python -m pipeline.cli clean     <input> -o <output>  [--max-core-diff 8.0]
     python -m pipeline.cli tag       <input>              [--source-set dcss] [--grid-size 32]
+    python -m pipeline.cli caption   <input>              [--backend claude|openai|local|manual]
     python -m pipeline.cli prompts   <manifest> -o <dir>  [--styles photo,painting,concept]
+    python -m pipeline.cli generate  <manifest> -o <dir>  [--backend comfyui|a1111|openai|replicate]
     python -m pipeline.cli package   <manifest> -o <dir>  [--val-ratio 0.1] [--test-ratio 0.1]
+    python -m pipeline.cli train     --manifest <path> --generated-dir <dir>  [--config config.json]
     python -m pipeline.cli run       <input> -o <output>  [--source-set dcss]  # full pipeline
 
 Each subcommand corresponds to a pipeline stage:
   extract  — Split sprite sheets/showcases into individual sprites
   clean    — Pixel-perfect reconstruction of extracted sprites
   tag      — Auto-detect metadata tags for cleaned sprites
+  caption  — Describe sprites using a VLM for accurate prompt generation
   prompts  — Generate unpixelization prompts for pair creation
+  generate — Generate high-res counterpart images from prompts
   package  — Assemble final training dataset from completed pairs
-  run      — Run extract → clean → tag → prompts in sequence
+  train    — Train a pixelization model (LoRA) on the packaged dataset
+  run      — Run extract → clean → tag → caption → prompts in sequence
 """
 
 import argparse
@@ -198,6 +204,103 @@ def cmd_prompts(args):
     return 0
 
 
+# ---- Subcommand: caption ----
+
+def cmd_caption(args):
+    from pipeline.captioner import batch_caption
+
+    input_dir = Path(args.inputs[0])
+    if not input_dir.is_dir():
+        logger.error("Caption expects a directory of sprite images")
+        return 1
+
+    cache_dir = Path(args.cache_dir) if args.cache_dir else input_dir / "captions"
+
+    results = batch_caption(
+        input_dir,
+        backend=args.backend,
+        model=args.model,
+        cache_dir=cache_dir,
+        rate_limit=args.rate_limit,
+    )
+
+    logger.info("Captioned %d sprites → %s", len(results), cache_dir)
+    for name, caption in results[:5]:
+        logger.info("  %s: %s", name, caption.short_description)
+    if len(results) > 5:
+        logger.info("  ... and %d more", len(results) - 5)
+
+    return 0
+
+
+# ---- Subcommand: generate ----
+
+def cmd_generate(args):
+    from pipeline.generator import generate_pairs_from_manifest, GenerationConfig
+    from pipeline.config import InputStyle
+
+    manifest_path = Path(args.inputs[0])
+    output_dir = Path(args.output)
+
+    config = GenerationConfig(
+        width=args.width,
+        height=args.height,
+        num_images=args.num_images,
+        guidance_scale=args.guidance_scale,
+        num_steps=args.steps,
+        seed=args.seed,
+        model=args.model or "",
+    )
+
+    styles = None
+    if args.styles:
+        style_names = [s.strip() for s in args.styles.split(",")]
+        styles = [InputStyle(s) for s in style_names]
+
+    count = generate_pairs_from_manifest(
+        manifest_path,
+        output_dir,
+        config=config,
+        backend=args.backend,
+        styles=styles,
+        rate_limit=args.rate_limit,
+        skip_existing=not args.regenerate,
+    )
+
+    logger.info("Generated %d images → %s", count, output_dir)
+    return 0
+
+
+# ---- Subcommand: train ----
+
+def cmd_train(args):
+    from training.train_lora import main as train_main
+
+    # Build argv for the training script
+    train_argv = []
+    if args.config:
+        train_argv.extend(["--config", args.config])
+    if args.manifest:
+        train_argv.extend(["--manifest", args.manifest])
+    if args.generated_dir:
+        train_argv.extend(["--generated-dir", args.generated_dir])
+    if args.train_output:
+        train_argv.extend(["--output-dir", args.train_output])
+    if args.base_model:
+        train_argv.extend(["--base-model", args.base_model])
+    if args.learning_rate is not None:
+        train_argv.extend(["--learning-rate", str(args.learning_rate)])
+    if args.lora_rank is not None:
+        train_argv.extend(["--lora-rank", str(args.lora_rank)])
+    if args.max_train_steps is not None:
+        train_argv.extend(["--max-train-steps", str(args.max_train_steps)])
+    if args.dry_run:
+        train_argv.append("--dry-run")
+
+    train_main(train_argv)
+    return 0
+
+
 # ---- Subcommand: package ----
 
 def cmd_package(args):
@@ -225,7 +328,7 @@ def cmd_package(args):
 # ---- Subcommand: run (full pipeline) ----
 
 def cmd_run(args):
-    """Run the full pipeline: extract → clean → tag → prompts."""
+    """Run the full pipeline: extract → clean → tag → caption → prompts."""
     from pipeline.sheet_splitter import extract_sprites, save_sprites, deduplicate_sprites
     from pipeline.cleaner import clean_sprite
     from pipeline.tagger import auto_tag
@@ -233,6 +336,17 @@ def cmd_run(args):
         generate_prompts, save_prompts, caption_placeholder,
     )
     from pipeline.config import PipelineConfig, InputStyle, AssetTags
+
+    # Try to import VLM captioner (optional)
+    captioner_available = False
+    captioner_backend = getattr(args, "captioner_backend", None)
+    if captioner_backend and captioner_backend != "none":
+        try:
+            from pipeline.captioner import caption_sprite
+            captioner_available = True
+            logger.info("VLM captioning enabled (backend=%s)", captioner_backend)
+        except ImportError as e:
+            logger.warning("VLM captioning not available: %s", e)
 
     config = PipelineConfig()
     if args.output:
@@ -242,6 +356,9 @@ def cmd_run(args):
         config.prompts_dir = base / "prompts"
         config.manifest_path = base / "manifest.jsonl"
     config.ensure_dirs()
+
+    caption_cache_dir = config.cleaned_dir.parent / "captions"
+    caption_cache_dir.mkdir(parents=True, exist_ok=True)
 
     image_paths = _gather_images(args.inputs, recursive=args.recursive)
     if not image_paths:
@@ -258,7 +375,7 @@ def cmd_run(args):
 
     source_set = args.source_set or ""
     manifest_entries = []
-    stats = {"extracted": 0, "cleaned": 0, "tagged": 0, "prompts": 0}
+    stats = {"extracted": 0, "cleaned": 0, "tagged": 0, "captioned": 0, "prompts": 0}
 
     for img_path in image_paths:
         logger.info("=" * 60)
@@ -271,7 +388,6 @@ def cmd_run(args):
 
         if not sprites:
             logger.info("  No sprites extracted, treating as single sprite")
-            # treat the whole image as a single sprite
             pil = Image.open(img_path)
             if pil.mode == "RGBA":
                 arr = np.array(pil)
@@ -315,15 +431,16 @@ def cmd_run(args):
             clean_up = config.cleaned_dir / f"{stem}_up.png"
 
             channels = asset.image_1x.shape[2] if len(asset.image_1x.shape) == 3 else 1
-            mode = "RGBA" if channels == 4 else "RGB"
-            Image.fromarray(asset.image_1x, mode).save(clean_1x)
-            Image.fromarray(asset.image_upscaled, mode).save(clean_up)
+            pil_mode = "RGBA" if channels == 4 else "RGB"
+            Image.fromarray(asset.image_1x, pil_mode).save(clean_1x)
+            Image.fromarray(asset.image_upscaled, pil_mode).save(clean_up)
 
             # --- Stage 3: Tag ---
             tags = auto_tag(
                 asset.image_1x,
                 grid_size=asset.cell_size,
                 source_set=source_set,
+                source_name=sprite_path.name,
             )
             stats["tagged"] += 1
 
@@ -332,8 +449,24 @@ def cmd_run(args):
                 stem, tags.to_tag_string(),
             )
 
+            # --- Stage 3b: Caption (VLM or placeholder) ---
+            if captioner_available:
+                try:
+                    caption = caption_sprite(
+                        asset.image_1x,
+                        source_path=str(clean_1x),
+                        backend=captioner_backend,
+                        cache_dir=caption_cache_dir,
+                    )
+                    stats["captioned"] += 1
+                    logger.info("  Captioned: %s", caption.short_description)
+                except Exception as e:
+                    logger.warning("  Caption failed, using placeholder: %s", e)
+                    caption = caption_placeholder(stem)
+            else:
+                caption = caption_placeholder(stem)
+
             # --- Stage 4: Generate prompts ---
-            caption = caption_placeholder(stem)
             prompts = generate_prompts(
                 str(clean_1x), tags, caption, styles,
             )
@@ -365,11 +498,12 @@ def cmd_run(args):
 
     logger.info("=" * 60)
     logger.info("Pipeline complete:")
-    logger.info("  Extracted: %d sprites", stats["extracted"])
-    logger.info("  Cleaned:   %d assets", stats["cleaned"])
-    logger.info("  Tagged:    %d assets", stats["tagged"])
-    logger.info("  Prompts:   %d generated", stats["prompts"])
-    logger.info("  Manifest:  %s", config.manifest_path)
+    logger.info("  Extracted:  %d sprites", stats["extracted"])
+    logger.info("  Cleaned:    %d assets", stats["cleaned"])
+    logger.info("  Tagged:     %d assets", stats["tagged"])
+    logger.info("  Captioned:  %d assets (VLM)", stats["captioned"])
+    logger.info("  Prompts:    %d generated", stats["prompts"])
+    logger.info("  Manifest:   %s", config.manifest_path)
 
     return 0
 
@@ -431,6 +565,45 @@ def build_parser() -> argparse.ArgumentParser:
                            help="Comma-separated styles (photorealistic,digital_painting,...)")
     p_prompts.set_defaults(func=cmd_prompts)
 
+    # -- caption --
+    p_caption = sub.add_parser("caption", help="Describe sprites using a VLM")
+    p_caption.add_argument("inputs", nargs="+", help="Directory of sprite images")
+    p_caption.add_argument("--backend", default="claude",
+                           choices=["claude", "openai", "local", "manual"],
+                           help="VLM backend (default: claude)")
+    p_caption.add_argument("--model", default=None,
+                           help="Override model name for the backend")
+    p_caption.add_argument("--cache-dir", default=None,
+                           help="Cache directory for captions")
+    p_caption.add_argument("--rate-limit", type=float, default=0.5,
+                           help="Seconds between API calls (default: 0.5)")
+    p_caption.set_defaults(func=cmd_caption)
+
+    # -- generate --
+    p_gen = sub.add_parser("generate", help="Generate high-res counterpart images")
+    p_gen.add_argument("inputs", nargs="+", help="Manifest JSONL path")
+    p_gen.add_argument("-o", "--output", required=True, help="Output directory")
+    p_gen.add_argument("--backend", default="comfyui",
+                       choices=["comfyui", "a1111", "openai", "replicate", "manual"],
+                       help="Generation backend (default: comfyui)")
+    p_gen.add_argument("--model", default=None,
+                       help="Override model name/checkpoint")
+    p_gen.add_argument("--width", type=int, default=1024, help="Image width")
+    p_gen.add_argument("--height", type=int, default=1024, help="Image height")
+    p_gen.add_argument("--num-images", type=int, default=1,
+                       help="Images per prompt")
+    p_gen.add_argument("--guidance-scale", type=float, default=7.5)
+    p_gen.add_argument("--steps", type=int, default=30,
+                       help="Inference steps")
+    p_gen.add_argument("--seed", type=int, default=None)
+    p_gen.add_argument("--styles", default=None,
+                       help="Comma-separated styles to generate")
+    p_gen.add_argument("--rate-limit", type=float, default=1.0,
+                       help="Seconds between API calls")
+    p_gen.add_argument("--regenerate", action="store_true",
+                       help="Regenerate existing images")
+    p_gen.set_defaults(func=cmd_generate)
+
     # -- package --
     p_package = sub.add_parser("package", help="Package pairs into training dataset")
     p_package.add_argument("inputs", nargs="+", help="Manifest JSONL path")
@@ -439,8 +612,28 @@ def build_parser() -> argparse.ArgumentParser:
     p_package.add_argument("--test-ratio", type=float, default=0.1)
     p_package.set_defaults(func=cmd_package)
 
+    # -- train --
+    p_train = sub.add_parser("train", help="Train a pixelization model (LoRA)")
+    p_train.add_argument("--config", default=None,
+                         help="Training config JSON file")
+    p_train.add_argument("--manifest", default=None,
+                         help="Dataset manifest.jsonl path")
+    p_train.add_argument("--generated-dir", default=None,
+                         help="Directory of generated high-res images")
+    p_train.add_argument("--train-output", default="training_output",
+                         help="Output directory for checkpoints")
+    p_train.add_argument("--base-model", default=None,
+                         help="HuggingFace base model ID")
+    p_train.add_argument("--learning-rate", type=float, default=None)
+    p_train.add_argument("--lora-rank", type=int, default=None)
+    p_train.add_argument("--max-train-steps", type=int, default=None)
+    p_train.add_argument("--dry-run", action="store_true",
+                         help="Print config without training")
+    p_train.set_defaults(func=cmd_train)
+
     # -- run (full pipeline) --
-    p_run = sub.add_parser("run", help="Run full pipeline: extract → clean → tag → prompts")
+    p_run = sub.add_parser("run",
+                           help="Run full pipeline: extract → clean → tag → caption → prompts")
     p_run.add_argument("inputs", nargs="+", help="Image files or directories")
     p_run.add_argument("-o", "--output", default=None,
                        help="Base output directory (default: data/)")
@@ -450,6 +643,9 @@ def build_parser() -> argparse.ArgumentParser:
                        help="Source tileset name")
     p_run.add_argument("--styles", default=None,
                        help="Comma-separated generation styles")
+    p_run.add_argument("--captioner-backend", default=None,
+                       choices=["claude", "openai", "local", "manual", "none"],
+                       help="VLM captioning backend (default: none/placeholder)")
     p_run.add_argument("--no-hough", action="store_true")
     p_run.add_argument("--recursive", "-r", action="store_true")
     p_run.set_defaults(func=cmd_run)
