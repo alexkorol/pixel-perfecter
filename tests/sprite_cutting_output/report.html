@@ -1,0 +1,593 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sprite Cutting Test</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,system-ui,sans-serif;background:#111;color:#ddd;padding:10px}
+h1{text-align:center;color:#0df;margin:8px 0 12px;font-size:1.3em}
+.sum{background:#1a1a2e;border-radius:8px;padding:10px;margin-bottom:14px;font-size:.9em}
+.sum p{margin:3px 0}
+.warn{color:#f44;font-weight:bold}
+.card{background:#16213e;border-radius:10px;padding:12px;margin-bottom:16px;border:1px solid #0f3460}
+.card h2{color:#ff6b9d;font-size:1em;margin-bottom:6px;word-break:break-all}
+.meta{font-size:.8em;color:#88a;margin-bottom:8px;display:flex;flex-wrap:wrap;gap:4px}
+.meta span{background:#0f3460;padding:2px 6px;border-radius:3px}
+.section{margin:8px 0}
+.section-title{font-weight:bold;color:#0df;font-size:.85em;margin:6px 0 4px}
+.ann{text-align:center;margin:4px 0}
+.ann img{max-width:100%;border-radius:4px;border:1px solid #333}
+.sprites{display:flex;flex-wrap:wrap;gap:6px}
+.sp{background:#0d1117;border:1px solid #30363d;border-radius:4px;padding:4px;text-align:center}
+.sp img{display:block;margin:0 auto 2px;image-rendering:pixelated;max-width:100px;max-height:100px}
+.sp .inf{font-size:.65em;color:#8b949e}
+.ok{color:#3fb950} .bad{color:#f85149} .meh{color:#d29922}
+hr{border:none;border-top:1px solid #333;margin:8px 0}
+</style>
+</head>
+<body>
+<h1>Sprite Cutting Test</h1>
+<div class="sum">
+<p><strong>13</strong> images tested</p>
+<p>auto: <strong>7206</strong> total sprites</p>
+<p>contours: <strong>42</strong> total sprites</p>
+<p>components: <strong>92</strong> total sprites</p>
+<p class="warn">10 images OVER-SPLIT by grid detection (pixel grid confused with sprite grid)</p>
+</div>
+<div class="card">
+<h2>20250611_2311_Fantasy RPG Icons_simple_compos... <span class="bad">OVER-SPLIT</span></h2>
+<div class="meta"><span>1024x1024</span><span>auto: grid</span><span>grid: 16x16px</span><span>auto:531 cont:4 comp:4</span></div>
+<div class="ann"><img src="img_00/source.png" alt="source"></div>
+<div class="section">
+<div class="section-title"><span class="">contours</span> - 4 sprites (437ms)</div>
+<div class="ann"><img src="img_00/annotated_contours.png" alt="contours boxes"></div>
+<div class="sprites">
+<div class="sp"><img src="img_00/contours_000.png"><div class="inf">#0 452x452</div></div>
+<div class="sp"><img src="img_00/contours_001.png"><div class="inf">#1 436x436</div></div>
+<div class="sp"><img src="img_00/contours_002.png"><div class="inf">#2 378x485</div></div>
+<div class="sp"><img src="img_00/contours_003.png"><div class="inf">#3 372x485</div></div>
+</div>
+</div>
+<div class="section">
+<div class="section-title"><span class="">components</span> - 4 sprites (375ms)</div>
+<div class="ann"><img src="img_00/annotated_components.png" alt="components boxes"></div>
+<div class="sprites">
+<div class="sp"><img src="img_00/components_000.png"><div class="inf">#0 452x452</div></div>
+<div class="sp"><img src="img_00/components_001.png"><div class="inf">#1 436x436</div></div>
+<div class="sp"><img src="img_00/components_002.png"><div class="inf">#2 378x485</div></div>
+<div class="sp"><img src="img_00/components_003.png"><div class="inf">#3 372x485</div></div>
+</div>
+</div>
+<div class="section">
+<div class="section-title"><span class="bad">auto</span> - 531 sprites (showing 12/531) (448ms)</div>
+<div class="ann"><img src="img_00/annotated_auto.png" alt="auto boxes"></div>
+<div class="sprites">
+<div class="sp"><img src="img_00/auto_000.png"><div class="inf">#28 16x16</div></div>
+<div class="sp"><img src="img_00/auto_001.png"><div class="inf">#32 16x16</div></div>
+<div class="sp"><img src="img_00/auto_002.png"><div class="inf">#49 16x16</div></div>
+<div class="sp"><img src="img_00/auto_003.png"><div class="inf">#53 16x16</div></div>
+<div class="sp"><img src="img_00/auto_004.png"><div class="inf">#54 16x16</div></div>
+<div class="sp"><img src="img_00/auto_005.png"><div class="inf">#62 16x16</div></div>
+<div class="sp"><img src="img_00/auto_006.png"><div class="inf">#64 16x16</div></div>
+<div class="sp"><img src="img_00/auto_007.png"><div class="inf">#74 16x16</div></div>
+<div class="sp"><img src="img_00/auto_008.png"><div class="inf">#87 16x16</div></div>
+<div class="sp"><img src="img_00/auto_009.png"><div class="inf">#92 16x16</div></div>
+<div class="sp"><img src="img_00/auto_010.png"><div class="inf">#102 16x16</div></div>
+<div class="sp"><img src="img_00/auto_011.png"><div class="inf">#103 16x16</div></div>
+</div>
+</div>
+</div>
+<div class="card">
+<h2>20250611_2311_Fantasy RPG Icons_simple_compos... <span class="bad">OVER-SPLIT</span></h2>
+<div class="meta"><span>1024x1024</span><span>auto: grid</span><span>grid: 15x15px</span><span>auto:881 cont:8 comp:8</span></div>
+<div class="ann"><img src="img_01/source.png" alt="source"></div>
+<div class="section">
+<div class="section-title"><span class="">contours</span> - 8 sprites (413ms)</div>
+<div class="ann"><img src="img_01/annotated_contours.png" alt="contours boxes"></div>
+<div class="sprites">
+<div class="sp"><img src="img_01/contours_000.png"><div class="inf">#0 420x438</div></div>
+<div class="sp"><img src="img_01/contours_001.png"><div class="inf">#1 342x434</div></div>
+<div class="sp"><img src="img_01/contours_002.png"><div class="inf">#2 23x68</div></div>
+<div class="sp"><img src="img_01/contours_003.png"><div class="inf">#3 125x187</div></div>
+<div class="sp"><img src="img_01/contours_004.png"><div class="inf">#4 327x458</div></div>
+<div class="sp"><img src="img_01/contours_005.png"><div class="inf">#5 264x456</div></div>
+<div class="sp"><img src="img_01/contours_006.png"><div class="inf">#6 82x84</div></div>
+<div class="sp"><img src="img_01/contours_007.png"><div class="inf">#7 34x36</div></div>
+</div>
+</div>
+<div class="section">
+<div class="section-title"><span class="">components</span> - 8 sprites (378ms)</div>
+<div class="ann"><img src="img_01/annotated_components.png" alt="components boxes"></div>
+<div class="sprites">
+<div class="sp"><img src="img_01/components_000.png"><div class="inf">#0 420x438</div></div>
+<div class="sp"><img src="img_01/components_001.png"><div class="inf">#1 342x434</div></div>
+<div class="sp"><img src="img_01/components_002.png"><div class="inf">#2 23x68</div></div>
+<div class="sp"><img src="img_01/components_003.png"><div class="inf">#3 125x187</div></div>
+<div class="sp"><img src="img_01/components_004.png"><div class="inf">#4 327x458</div></div>
+<div class="sp"><img src="img_01/components_005.png"><div class="inf">#5 264x456</div></div>
+<div class="sp"><img src="img_01/components_006.png"><div class="inf">#6 82x84</div></div>
+<div class="sp"><img src="img_01/components_007.png"><div class="inf">#7 34x36</div></div>
+</div>
+</div>
+<div class="section">
+<div class="section-title"><span class="bad">auto</span> - 881 sprites (showing 12/881) (552ms)</div>
+<div class="ann"><img src="img_01/annotated_auto.png" alt="auto boxes"></div>
+<div class="sprites">
+<div class="sp"><img src="img_01/auto_000.png"><div class="inf">#4 15x15</div></div>
+<div class="sp"><img src="img_01/auto_001.png"><div class="inf">#9 15x15</div></div>
+<div class="sp"><img src="img_01/auto_002.png"><div class="inf">#10 15x15</div></div>
+<div class="sp"><img src="img_01/auto_003.png"><div class="inf">#11 15x15</div></div>
+<div class="sp"><img src="img_01/auto_004.png"><div class="inf">#13 15x15</div></div>
+<div class="sp"><img src="img_01/auto_005.png"><div class="inf">#22 15x15</div></div>
+<div class="sp"><img src="img_01/auto_006.png"><div class="inf">#23 15x15</div></div>
+<div class="sp"><img src="img_01/auto_007.png"><div class="inf">#25 15x15</div></div>
+<div class="sp"><img src="img_01/auto_008.png"><div class="inf">#29 15x15</div></div>
+<div class="sp"><img src="img_01/auto_009.png"><div class="inf">#30 15x15</div></div>
+<div class="sp"><img src="img_01/auto_010.png"><div class="inf">#33 15x15</div></div>
+<div class="sp"><img src="img_01/auto_011.png"><div class="inf">#34 15x15</div></div>
+</div>
+</div>
+</div>
+<div class="card">
+<h2>20250611_2348_RPG Pixel-UI Icons_simple_compo... <span class="bad">OVER-SPLIT</span></h2>
+<div class="meta"><span>1024x1024</span><span>auto: grid</span><span>grid: 23x23px</span><span>auto:401 cont:4 comp:4</span></div>
+<div class="ann"><img src="img_02/source.png" alt="source"></div>
+<div class="section">
+<div class="section-title"><span class="">contours</span> - 4 sprites (368ms)</div>
+<div class="ann"><img src="img_02/annotated_contours.png" alt="contours boxes"></div>
+<div class="sprites">
+<div class="sp"><img src="img_02/contours_000.png"><div class="inf">#0 302x391</div></div>
+<div class="sp"><img src="img_02/contours_001.png"><div class="inf">#1 389x369</div></div>
+<div class="sp"><img src="img_02/contours_002.png"><div class="inf">#2 389x385</div></div>
+<div class="sp"><img src="img_02/contours_003.png"><div class="inf">#3 348x385</div></div>
+</div>
+</div>
+<div class="section">
+<div class="section-title"><span class="">components</span> - 4 sprites (376ms)</div>
+<div class="ann"><img src="img_02/annotated_components.png" alt="components boxes"></div>
+<div class="sprites">
+<div class="sp"><img src="img_02/components_000.png"><div class="inf">#0 302x391</div></div>
+<div class="sp"><img src="img_02/components_001.png"><div class="inf">#1 389x369</div></div>
+<div class="sp"><img src="img_02/components_002.png"><div class="inf">#2 389x385</div></div>
+<div class="sp"><img src="img_02/components_003.png"><div class="inf">#3 348x385</div></div>
+</div>
+</div>
+<div class="section">
+<div class="section-title"><span class="bad">auto</span> - 401 sprites (showing 12/401) (329ms)</div>
+<div class="ann"><img src="img_02/annotated_auto.png" alt="auto boxes"></div>
+<div class="sprites">
+<div class="sp"><img src="img_02/auto_000.png"><div class="inf">#2 23x23</div></div>
+<div class="sp"><img src="img_02/auto_001.png"><div class="inf">#3 23x23</div></div>
+<div class="sp"><img src="img_02/auto_002.png"><div class="inf">#6 23x23</div></div>
+<div class="sp"><img src="img_02/auto_003.png"><div class="inf">#11 23x23</div></div>
+<div class="sp"><img src="img_02/auto_004.png"><div class="inf">#12 23x23</div></div>
+<div class="sp"><img src="img_02/auto_005.png"><div class="inf">#14 23x23</div></div>
+<div class="sp"><img src="img_02/auto_006.png"><div class="inf">#15 23x23</div></div>
+<div class="sp"><img src="img_02/auto_007.png"><div class="inf">#17 23x23</div></div>
+<div class="sp"><img src="img_02/auto_008.png"><div class="inf">#18 23x23</div></div>
+<div class="sp"><img src="img_02/auto_009.png"><div class="inf">#19 23x23</div></div>
+<div class="sp"><img src="img_02/auto_010.png"><div class="inf">#20 23x23</div></div>
+<div class="sp"><img src="img_02/auto_011.png"><div class="inf">#21 23x23</div></div>
+</div>
+</div>
+</div>
+<div class="card">
+<h2>20250612_0008_Dark Fantasy Monsters_simple_co... <span class="ok">OK</span></h2>
+<div class="meta"><span>1024x1024</span><span>auto: contours</span><span>auto:5 cont:5 comp:5</span></div>
+<div class="ann"><img src="img_03/source.png" alt="source"></div>
+<div class="section">
+<div class="section-title"><span class="">contours</span> - 5 sprites (391ms)</div>
+<div class="ann"><img src="img_03/annotated_contours.png" alt="contours boxes"></div>
+<div class="sprites">
+<div class="sp"><img src="img_03/contours_000.png"><div class="inf">#0 394x506</div></div>
+<div class="sp"><img src="img_03/contours_001.png"><div class="inf">#1 354x510</div></div>
+<div class="sp"><img src="img_03/contours_002.png"><div class="inf">#2 12x13</div></div>
+<div class="sp"><img src="img_03/contours_003.png"><div class="inf">#3 422x431</div></div>
+<div class="sp"><img src="img_03/contours_004.png"><div class="inf">#4 448x452</div></div>
+</div>
+</div>
+<div class="section">
+<div class="section-title"><span class="">components</span> - 5 sprites (379ms)</div>
+<div class="ann"><img src="img_03/annotated_components.png" alt="components boxes"></div>
+<div class="sprites">
+<div class="sp"><img src="img_03/components_000.png"><div class="inf">#0 394x506</div></div>
+<div class="sp"><img src="img_03/components_001.png"><div class="inf">#1 354x510</div></div>
+<div class="sp"><img src="img_03/components_002.png"><div class="inf">#2 12x13</div></div>
+<div class="sp"><img src="img_03/components_003.png"><div class="inf">#3 422x431</div></div>
+<div class="sp"><img src="img_03/components_004.png"><div class="inf">#4 448x452</div></div>
+</div>
+</div>
+<div class="section">
+<div class="section-title"><span class="">auto</span> - 5 sprites (389ms)</div>
+<div class="ann"><img src="img_03/annotated_auto.png" alt="auto boxes"></div>
+<div class="sprites">
+<div class="sp"><img src="img_03/auto_000.png"><div class="inf">#0 394x506</div></div>
+<div class="sp"><img src="img_03/auto_001.png"><div class="inf">#1 354x510</div></div>
+<div class="sp"><img src="img_03/auto_002.png"><div class="inf">#2 12x13</div></div>
+<div class="sp"><img src="img_03/auto_003.png"><div class="inf">#3 422x431</div></div>
+<div class="sp"><img src="img_03/auto_004.png"><div class="inf">#4 448x452</div></div>
+</div>
+</div>
+</div>
+<div class="card">
+<h2>20250614_1551_Alchemist Ingredients Grid_simp... <span class="bad">OVER-SPLIT</span></h2>
+<div class="meta"><span>1024x1024</span><span>auto: grid</span><span>grid: 18x18px</span><span>auto:668 cont:4 comp:4</span></div>
+<div class="ann"><img src="img_04/source.png" alt="source"></div>
+<div class="section">
+<div class="section-title"><span class="">contours</span> - 4 sprites (389ms)</div>
+<div class="ann"><img src="img_04/annotated_contours.png" alt="contours boxes"></div>
+<div class="sprites">
+<div class="sp"><img src="img_04/contours_000.png"><div class="inf">#0 350x477</div></div>
+<div class="sp"><img src="img_04/contours_001.png"><div class="inf">#1 405x441</div></div>
+<div class="sp"><img src="img_04/contours_002.png"><div class="inf">#2 407x406</div></div>
+<div class="sp"><img src="img_04/contours_003.png"><div class="inf">#3 405x386</div></div>
+</div>
+</div>
+<div class="section">
+<div class="section-title"><span class="">components</span> - 4 sprites (376ms)</div>
+<div class="ann"><img src="img_04/annotated_components.png" alt="components boxes"></div>
+<div class="sprites">
+<div class="sp"><img src="img_04/components_000.png"><div class="inf">#0 350x477</div></div>
+<div class="sp"><img src="img_04/components_001.png"><div class="inf">#1 405x441</div></div>
+<div class="sp"><img src="img_04/components_002.png"><div class="inf">#2 407x406</div></div>
+<div class="sp"><img src="img_04/components_003.png"><div class="inf">#3 405x386</div></div>
+</div>
+</div>
+<div class="section">
+<div class="section-title"><span class="bad">auto</span> - 668 sprites (showing 12/668) (455ms)</div>
+<div class="ann"><img src="img_04/annotated_auto.png" alt="auto boxes"></div>
+<div class="sprites">
+<div class="sp"><img src="img_04/auto_000.png"><div class="inf">#2 18x18</div></div>
+<div class="sp"><img src="img_04/auto_001.png"><div class="inf">#3 18x18</div></div>
+<div class="sp"><img src="img_04/auto_002.png"><div class="inf">#4 18x18</div></div>
+<div class="sp"><img src="img_04/auto_003.png"><div class="inf">#5 18x18</div></div>
+<div class="sp"><img src="img_04/auto_004.png"><div class="inf">#8 18x18</div></div>
+<div class="sp"><img src="img_04/auto_005.png"><div class="inf">#10 18x18</div></div>
+<div class="sp"><img src="img_04/auto_006.png"><div class="inf">#17 18x18</div></div>
+<div class="sp"><img src="img_04/auto_007.png"><div class="inf">#19 18x18</div></div>
+<div class="sp"><img src="img_04/auto_008.png"><div class="inf">#20 18x18</div></div>
+<div class="sp"><img src="img_04/auto_009.png"><div class="inf">#21 18x18</div></div>
+<div class="sp"><img src="img_04/auto_010.png"><div class="inf">#22 18x18</div></div>
+<div class="sp"><img src="img_04/auto_011.png"><div class="inf">#23 18x18</div></div>
+</div>
+</div>
+</div>
+<div class="card">
+<h2>20250614_1551_Alchemist Ingredients Grid_simp... <span class="bad">OVER-SPLIT</span></h2>
+<div class="meta"><span>1024x1024</span><span>auto: grid</span><span>grid: 20x20px</span><span>auto:190 cont:4 comp:4</span></div>
+<div class="ann"><img src="img_05/source.png" alt="source"></div>
+<div class="section">
+<div class="section-title"><span class="">contours</span> - 4 sprites (391ms)</div>
+<div class="ann"><img src="img_05/annotated_contours.png" alt="contours boxes"></div>
+<div class="sprites">
+<div class="sp"><img src="img_05/contours_000.png"><div class="inf">#0 377x401</div></div>
+<div class="sp"><img src="img_05/contours_001.png"><div class="inf">#1 283x404</div></div>
+<div class="sp"><img src="img_05/contours_002.png"><div class="inf">#2 358x381</div></div>
+<div class="sp"><img src="img_05/contours_003.png"><div class="inf">#3 384x360</div></div>
+</div>
+</div>
+<div class="section">
+<div class="section-title"><span class="">components</span> - 4 sprites (384ms)</div>
+<div class="ann"><img src="img_05/annotated_components.png" alt="components boxes"></div>
+<div class="sprites">
+<div class="sp"><img src="img_05/components_000.png"><div class="inf">#0 377x401</div></div>
+<div class="sp"><img src="img_05/components_001.png"><div class="inf">#1 283x404</div></div>
+<div class="sp"><img src="img_05/components_002.png"><div class="inf">#2 358x381</div></div>
+<div class="sp"><img src="img_05/components_003.png"><div class="inf">#3 384x360</div></div>
+</div>
+</div>
+<div class="section">
+<div class="section-title"><span class="bad">auto</span> - 190 sprites (showing 12/190) (403ms)</div>
+<div class="ann"><img src="img_05/annotated_auto.png" alt="auto boxes"></div>
+<div class="sprites">
+<div class="sp"><img src="img_05/auto_000.png"><div class="inf">#2 20x20</div></div>
+<div class="sp"><img src="img_05/auto_001.png"><div class="inf">#7 20x20</div></div>
+<div class="sp"><img src="img_05/auto_002.png"><div class="inf">#9 20x20</div></div>
+<div class="sp"><img src="img_05/auto_003.png"><div class="inf">#10 20x20</div></div>
+<div class="sp"><img src="img_05/auto_004.png"><div class="inf">#11 20x20</div></div>
+<div class="sp"><img src="img_05/auto_005.png"><div class="inf">#12 20x20</div></div>
+<div class="sp"><img src="img_05/auto_006.png"><div class="inf">#13 20x20</div></div>
+<div class="sp"><img src="img_05/auto_007.png"><div class="inf">#15 20x20</div></div>
+<div class="sp"><img src="img_05/auto_008.png"><div class="inf">#16 20x20</div></div>
+<div class="sp"><img src="img_05/auto_009.png"><div class="inf">#19 20x20</div></div>
+<div class="sp"><img src="img_05/auto_010.png"><div class="inf">#20 20x20</div></div>
+<div class="sp"><img src="img_05/auto_011.png"><div class="inf">#30 20x20</div></div>
+</div>
+</div>
+</div>
+<div class="card">
+<h2>20250614_1642_Retro Shooter Texture Atlas_sim... <span class="bad">OVER-SPLIT</span></h2>
+<div class="meta"><span>1024x1536</span><span>auto: grid</span><span>grid: 11x11px</span><span>auto:758 cont:1 comp:13</span></div>
+<div class="ann"><img src="img_06/source.png" alt="source"></div>
+<div class="section">
+<div class="section-title"><span class="">contours</span> - 1 sprites (633ms)</div>
+<div class="ann"><img src="img_06/annotated_contours.png" alt="contours boxes"></div>
+<div class="sprites">
+<div class="sp"><img src="img_06/contours_000.png"><div class="inf">#0 1024x1536</div></div>
+</div>
+</div>
+<div class="section">
+<div class="section-title"><span class="">components</span> - 13 sprites (showing 12/13) (696ms)</div>
+<div class="ann"><img src="img_06/annotated_components.png" alt="components boxes"></div>
+<div class="sprites">
+<div class="sp"><img src="img_06/components_000.png"><div class="inf">#0 153x129</div></div>
+<div class="sp"><img src="img_06/components_001.png"><div class="inf">#1 165x129</div></div>
+<div class="sp"><img src="img_06/components_002.png"><div class="inf">#2 17x101</div></div>
+<div class="sp"><img src="img_06/components_003.png"><div class="inf">#3 37x85</div></div>
+<div class="sp"><img src="img_06/components_004.png"><div class="inf">#4 24x129</div></div>
+<div class="sp"><img src="img_06/components_005.png"><div class="inf">#5 76x125</div></div>
+<div class="sp"><img src="img_06/components_006.png"><div class="inf">#6 161x125</div></div>
+<div class="sp"><img src="img_06/components_007.png"><div class="inf">#7 153x67</div></div>
+<div class="sp"><img src="img_06/components_008.png"><div class="inf">#8 327x306</div></div>
+<div class="sp"><img src="img_06/components_009.png"><div class="inf">#9 286x261</div></div>
+<div class="sp"><img src="img_06/components_010.png"><div class="inf">#10 323x316</div></div>
+<div class="sp"><img src="img_06/components_011.png"><div class="inf">#11 327x316</div></div>
+</div>
+</div>
+<div class="section">
+<div class="section-title"><span class="bad">auto</span> - 758 sprites (showing 12/758) (958ms)</div>
+<div class="ann"><img src="img_06/annotated_auto.png" alt="auto boxes"></div>
+<div class="sprites">
+<div class="sp"><img src="img_06/auto_000.png"><div class="inf">#4 11x11</div></div>
+<div class="sp"><img src="img_06/auto_001.png"><div class="inf">#16 11x11</div></div>
+<div class="sp"><img src="img_06/auto_002.png"><div class="inf">#40 11x11</div></div>
+<div class="sp"><img src="img_06/auto_003.png"><div class="inf">#42 11x11</div></div>
+<div class="sp"><img src="img_06/auto_004.png"><div class="inf">#46 11x11</div></div>
+<div class="sp"><img src="img_06/auto_005.png"><div class="inf">#49 11x11</div></div>
+<div class="sp"><img src="img_06/auto_006.png"><div class="inf">#51 11x11</div></div>
+<div class="sp"><img src="img_06/auto_007.png"><div class="inf">#57 11x11</div></div>
+<div class="sp"><img src="img_06/auto_008.png"><div class="inf">#63 11x11</div></div>
+<div class="sp"><img src="img_06/auto_009.png"><div class="inf">#70 11x11</div></div>
+<div class="sp"><img src="img_06/auto_010.png"><div class="inf">#77 11x11</div></div>
+<div class="sp"><img src="img_06/auto_011.png"><div class="inf">#79 11x11</div></div>
+</div>
+</div>
+</div>
+<div class="card">
+<h2>20250614_1713_Fantasy Pixel-Art Assets_simple... <span class="bad">OVER-SPLIT</span></h2>
+<div class="meta"><span>1024x1024</span><span>auto: grid</span><span>grid: 12x12px</span><span>auto:1245 cont:3 comp:17</span></div>
+<div class="ann"><img src="img_07/source.png" alt="source"></div>
+<div class="section">
+<div class="section-title"><span class="">contours</span> - 3 sprites (447ms)</div>
+<div class="ann"><img src="img_07/annotated_contours.png" alt="contours boxes"></div>
+<div class="sprites">
+<div class="sp"><img src="img_07/contours_000.png"><div class="inf">#0 1024x1024</div></div>
+<div class="sp"><img src="img_07/contours_001.png"><div class="inf">#1 306x300</div></div>
+<div class="sp"><img src="img_07/contours_002.png"><div class="inf">#2 353x197</div></div>
+</div>
+</div>
+<div class="section">
+<div class="section-title"><span class="">components</span> - 17 sprites (showing 12/17) (223ms)</div>
+<div class="ann"><img src="img_07/annotated_components.png" alt="components boxes"></div>
+<div class="sprites">
+<div class="sp"><img src="img_07/components_000.png"><div class="inf">#0 60x62</div></div>
+<div class="sp"><img src="img_07/components_001.png"><div class="inf">#1 191x398</div></div>
+<div class="sp"><img src="img_07/components_002.png"><div class="inf">#2 15x14</div></div>
+<div class="sp"><img src="img_07/components_003.png"><div class="inf">#3 374x307</div></div>
+<div class="sp"><img src="img_07/components_004.png"><div class="inf">#4 33x37</div></div>
+<div class="sp"><img src="img_07/components_005.png"><div class="inf">#5 14x15</div></div>
+<div class="sp"><img src="img_07/components_006.png"><div class="inf">#6 247x352</div></div>
+<div class="sp"><img src="img_07/components_007.png"><div class="inf">#7 60x44</div></div>
+<div class="sp"><img src="img_07/components_008.png"><div class="inf">#8 62x63</div></div>
+<div class="sp"><img src="img_07/components_009.png"><div class="inf">#9 306x295</div></div>
+<div class="sp"><img src="img_07/components_010.png"><div class="inf">#10 15x17</div></div>
+<div class="sp"><img src="img_07/components_011.png"><div class="inf">#11 37x40</div></div>
+</div>
+</div>
+<div class="section">
+<div class="section-title"><span class="bad">auto</span> - 1245 sprites (showing 12/1245) (618ms)</div>
+<div class="ann"><img src="img_07/annotated_auto.png" alt="auto boxes"></div>
+<div class="sprites">
+<div class="sp"><img src="img_07/auto_000.png"><div class="inf">#4 12x12</div></div>
+<div class="sp"><img src="img_07/auto_001.png"><div class="inf">#8 12x12</div></div>
+<div class="sp"><img src="img_07/auto_002.png"><div class="inf">#9 12x12</div></div>
+<div class="sp"><img src="img_07/auto_003.png"><div class="inf">#12 12x12</div></div>
+<div class="sp"><img src="img_07/auto_004.png"><div class="inf">#13 12x12</div></div>
+<div class="sp"><img src="img_07/auto_005.png"><div class="inf">#14 12x12</div></div>
+<div class="sp"><img src="img_07/auto_006.png"><div class="inf">#15 12x12</div></div>
+<div class="sp"><img src="img_07/auto_007.png"><div class="inf">#17 12x12</div></div>
+<div class="sp"><img src="img_07/auto_008.png"><div class="inf">#18 12x12</div></div>
+<div class="sp"><img src="img_07/auto_009.png"><div class="inf">#19 12x12</div></div>
+<div class="sp"><img src="img_07/auto_010.png"><div class="inf">#20 12x12</div></div>
+<div class="sp"><img src="img_07/auto_011.png"><div class="inf">#21 12x12</div></div>
+</div>
+</div>
+</div>
+<div class="card">
+<h2>20250614_1713_Fantasy Pixel-Art Assets_simple... <span class="bad">OVER-SPLIT</span></h2>
+<div class="meta"><span>1024x1024</span><span>auto: grid</span><span>grid: 12x13px</span><span>auto:1023 cont:1 comp:18</span></div>
+<div class="ann"><img src="img_08/source.png" alt="source"></div>
+<div class="section">
+<div class="section-title"><span class="">contours</span> - 1 sprites (424ms)</div>
+<div class="ann"><img src="img_08/annotated_contours.png" alt="contours boxes"></div>
+<div class="sprites">
+<div class="sp"><img src="img_08/contours_000.png"><div class="inf">#0 1024x1024</div></div>
+</div>
+</div>
+<div class="section">
+<div class="section-title"><span class="">components</span> - 18 sprites (showing 12/18) (197ms)</div>
+<div class="ann"><img src="img_08/annotated_components.png" alt="components boxes"></div>
+<div class="sprites">
+<div class="sp"><img src="img_08/components_000.png"><div class="inf">#0 250x387</div></div>
+<div class="sp"><img src="img_08/components_001.png"><div class="inf">#1 40x41</div></div>
+<div class="sp"><img src="img_08/components_002.png"><div class="inf">#2 362x336</div></div>
+<div class="sp"><img src="img_08/components_003.png"><div class="inf">#3 40x49</div></div>
+<div class="sp"><img src="img_08/components_004.png"><div class="inf">#4 50x50</div></div>
+<div class="sp"><img src="img_08/components_005.png"><div class="inf">#5 17x19</div></div>
+<div class="sp"><img src="img_08/components_006.png"><div class="inf">#6 42x50</div></div>
+<div class="sp"><img src="img_08/components_007.png"><div class="inf">#7 289x264</div></div>
+<div class="sp"><img src="img_08/components_008.png"><div class="inf">#8 17x19</div></div>
+<div class="sp"><img src="img_08/components_009.png"><div class="inf">#9 19x18</div></div>
+<div class="sp"><img src="img_08/components_010.png"><div class="inf">#10 48x58</div></div>
+<div class="sp"><img src="img_08/components_011.png"><div class="inf">#11 262x361</div></div>
+</div>
+</div>
+<div class="section">
+<div class="section-title"><span class="bad">auto</span> - 1023 sprites (showing 12/1023) (521ms)</div>
+<div class="ann"><img src="img_08/annotated_auto.png" alt="auto boxes"></div>
+<div class="sprites">
+<div class="sp"><img src="img_08/auto_000.png"><div class="inf">#10 12x13</div></div>
+<div class="sp"><img src="img_08/auto_001.png"><div class="inf">#11 12x13</div></div>
+<div class="sp"><img src="img_08/auto_002.png"><div class="inf">#13 12x13</div></div>
+<div class="sp"><img src="img_08/auto_003.png"><div class="inf">#14 12x13</div></div>
+<div class="sp"><img src="img_08/auto_004.png"><div class="inf">#15 12x13</div></div>
+<div class="sp"><img src="img_08/auto_005.png"><div class="inf">#16 12x13</div></div>
+<div class="sp"><img src="img_08/auto_006.png"><div class="inf">#20 12x13</div></div>
+<div class="sp"><img src="img_08/auto_007.png"><div class="inf">#21 12x13</div></div>
+<div class="sp"><img src="img_08/auto_008.png"><div class="inf">#28 12x13</div></div>
+<div class="sp"><img src="img_08/auto_009.png"><div class="inf">#31 12x13</div></div>
+<div class="sp"><img src="img_08/auto_010.png"><div class="inf">#32 12x13</div></div>
+<div class="sp"><img src="img_08/auto_011.png"><div class="inf">#33 12x13</div></div>
+</div>
+</div>
+</div>
+<div class="card">
+<h2>20250614_1715_Greek Pixel Art Tiles_simple_co... <span class="ok">OK</span></h2>
+<div class="meta"><span>1024x1024</span><span>auto: components</span><span>auto:4 cont:1 comp:4</span></div>
+<div class="ann"><img src="img_09/source.png" alt="source"></div>
+<div class="section">
+<div class="section-title"><span class="">contours</span> - 1 sprites (452ms)</div>
+<div class="ann"><img src="img_09/annotated_contours.png" alt="contours boxes"></div>
+<div class="sprites">
+<div class="sp"><img src="img_09/contours_000.png"><div class="inf">#0 936x1024</div></div>
+</div>
+</div>
+<div class="section">
+<div class="section-title"><span class="">components</span> - 4 sprites (118ms)</div>
+<div class="ann"><img src="img_09/annotated_components.png" alt="components boxes"></div>
+<div class="sprites">
+<div class="sp"><img src="img_09/components_000.png"><div class="inf">#0 326x472</div></div>
+<div class="sp"><img src="img_09/components_001.png"><div class="inf">#1 375x487</div></div>
+<div class="sp"><img src="img_09/components_002.png"><div class="inf">#2 332x462</div></div>
+<div class="sp"><img src="img_09/components_003.png"><div class="inf">#3 442x439</div></div>
+</div>
+</div>
+<div class="section">
+<div class="section-title"><span class="">auto</span> - 4 sprites (134ms)</div>
+<div class="ann"><img src="img_09/annotated_auto.png" alt="auto boxes"></div>
+<div class="sprites">
+<div class="sp"><img src="img_09/auto_000.png"><div class="inf">#0 326x472</div></div>
+<div class="sp"><img src="img_09/auto_001.png"><div class="inf">#1 375x487</div></div>
+<div class="sp"><img src="img_09/auto_002.png"><div class="inf">#2 332x462</div></div>
+<div class="sp"><img src="img_09/auto_003.png"><div class="inf">#3 442x439</div></div>
+</div>
+</div>
+</div>
+<div class="card">
+<h2>20250614_1715_Greek Pixel Art Tiles_simple_co... <span class="bad">OVER-SPLIT</span></h2>
+<div class="meta"><span>1024x1024</span><span>auto: grid</span><span>grid: 13x13px</span><span>auto:1013 cont:1 comp:4</span></div>
+<div class="ann"><img src="img_10/source.png" alt="source"></div>
+<div class="section">
+<div class="section-title"><span class="">contours</span> - 1 sprites (419ms)</div>
+<div class="ann"><img src="img_10/annotated_contours.png" alt="contours boxes"></div>
+<div class="sprites">
+<div class="sp"><img src="img_10/contours_000.png"><div class="inf">#0 1024x1024</div></div>
+</div>
+</div>
+<div class="section">
+<div class="section-title"><span class="">components</span> - 4 sprites (108ms)</div>
+<div class="ann"><img src="img_10/annotated_components.png" alt="components boxes"></div>
+<div class="sprites">
+<div class="sp"><img src="img_10/components_000.png"><div class="inf">#0 345x437</div></div>
+<div class="sp"><img src="img_10/components_001.png"><div class="inf">#1 305x436</div></div>
+<div class="sp"><img src="img_10/components_002.png"><div class="inf">#2 293x411</div></div>
+<div class="sp"><img src="img_10/components_003.png"><div class="inf">#3 400x385</div></div>
+</div>
+</div>
+<div class="section">
+<div class="section-title"><span class="bad">auto</span> - 1013 sprites (showing 12/1013) (505ms)</div>
+<div class="ann"><img src="img_10/annotated_auto.png" alt="auto boxes"></div>
+<div class="sprites">
+<div class="sp"><img src="img_10/auto_000.png"><div class="inf">#5 13x13</div></div>
+<div class="sp"><img src="img_10/auto_001.png"><div class="inf">#25 13x13</div></div>
+<div class="sp"><img src="img_10/auto_002.png"><div class="inf">#26 13x13</div></div>
+<div class="sp"><img src="img_10/auto_003.png"><div class="inf">#30 13x13</div></div>
+<div class="sp"><img src="img_10/auto_004.png"><div class="inf">#35 13x13</div></div>
+<div class="sp"><img src="img_10/auto_005.png"><div class="inf">#36 13x13</div></div>
+<div class="sp"><img src="img_10/auto_006.png"><div class="inf">#39 13x13</div></div>
+<div class="sp"><img src="img_10/auto_007.png"><div class="inf">#46 13x13</div></div>
+<div class="sp"><img src="img_10/auto_008.png"><div class="inf">#47 13x13</div></div>
+<div class="sp"><img src="img_10/auto_009.png"><div class="inf">#51 13x13</div></div>
+<div class="sp"><img src="img_10/auto_010.png"><div class="inf">#52 13x13</div></div>
+<div class="sp"><img src="img_10/auto_011.png"><div class="inf">#53 13x13</div></div>
+</div>
+</div>
+</div>
+<div class="card">
+<h2>20250614_1722_Grim Dungeon Textures_simple_co... <span class="ok">OK</span></h2>
+<div class="meta"><span>1024x1024</span><span>auto: components</span><span>auto:4 cont:3 comp:4</span></div>
+<div class="ann"><img src="img_11/source.png" alt="source"></div>
+<div class="section">
+<div class="section-title"><span class="">contours</span> - 3 sprites (444ms)</div>
+<div class="ann"><img src="img_11/annotated_contours.png" alt="contours boxes"></div>
+<div class="sprites">
+<div class="sp"><img src="img_11/contours_000.png"><div class="inf">#0 984x483</div></div>
+<div class="sp"><img src="img_11/contours_001.png"><div class="inf">#1 440x435</div></div>
+<div class="sp"><img src="img_11/contours_002.png"><div class="inf">#2 443x434</div></div>
+</div>
+</div>
+<div class="section">
+<div class="section-title"><span class="">components</span> - 4 sprites (133ms)</div>
+<div class="ann"><img src="img_11/annotated_components.png" alt="components boxes"></div>
+<div class="sprites">
+<div class="sp"><img src="img_11/components_000.png"><div class="inf">#0 441x436</div></div>
+<div class="sp"><img src="img_11/components_001.png"><div class="inf">#1 443x436</div></div>
+<div class="sp"><img src="img_11/components_002.png"><div class="inf">#2 440x434</div></div>
+<div class="sp"><img src="img_11/components_003.png"><div class="inf">#3 443x434</div></div>
+</div>
+</div>
+<div class="section">
+<div class="section-title"><span class="">auto</span> - 4 sprites (137ms)</div>
+<div class="ann"><img src="img_11/annotated_auto.png" alt="auto boxes"></div>
+<div class="sprites">
+<div class="sp"><img src="img_11/auto_000.png"><div class="inf">#0 441x436</div></div>
+<div class="sp"><img src="img_11/auto_001.png"><div class="inf">#1 443x436</div></div>
+<div class="sp"><img src="img_11/auto_002.png"><div class="inf">#2 440x434</div></div>
+<div class="sp"><img src="img_11/auto_003.png"><div class="inf">#3 443x434</div></div>
+</div>
+</div>
+</div>
+<div class="card">
+<h2>20250614_1722_Grim Dungeon Textures_simple_co... <span class="bad">OVER-SPLIT</span></h2>
+<div class="meta"><span>1024x1024</span><span>auto: grid</span><span>grid: 15x15px</span><span>auto:483 cont:3 comp:3</span></div>
+<div class="ann"><img src="img_12/source.png" alt="source"></div>
+<div class="section">
+<div class="section-title"><span class="">contours</span> - 3 sprites (390ms)</div>
+<div class="ann"><img src="img_12/annotated_contours.png" alt="contours boxes"></div>
+<div class="sprites">
+<div class="sp"><img src="img_12/contours_000.png"><div class="inf">#0 450x449</div></div>
+<div class="sp"><img src="img_12/contours_001.png"><div class="inf">#1 449x449</div></div>
+<div class="sp"><img src="img_12/contours_002.png"><div class="inf">#2 450x450</div></div>
+</div>
+</div>
+<div class="section">
+<div class="section-title"><span class="">components</span> - 3 sprites (119ms)</div>
+<div class="ann"><img src="img_12/annotated_components.png" alt="components boxes"></div>
+<div class="sprites">
+<div class="sp"><img src="img_12/components_000.png"><div class="inf">#0 450x449</div></div>
+<div class="sp"><img src="img_12/components_001.png"><div class="inf">#1 449x449</div></div>
+<div class="sp"><img src="img_12/components_002.png"><div class="inf">#2 450x450</div></div>
+</div>
+</div>
+<div class="section">
+<div class="section-title"><span class="bad">auto</span> - 483 sprites (showing 12/483) (522ms)</div>
+<div class="ann"><img src="img_12/annotated_auto.png" alt="auto boxes"></div>
+<div class="sprites">
+<div class="sp"><img src="img_12/auto_000.png"><div class="inf">#7 15x15</div></div>
+<div class="sp"><img src="img_12/auto_001.png"><div class="inf">#8 15x15</div></div>
+<div class="sp"><img src="img_12/auto_002.png"><div class="inf">#11 15x15</div></div>
+<div class="sp"><img src="img_12/auto_003.png"><div class="inf">#12 15x15</div></div>
+<div class="sp"><img src="img_12/auto_004.png"><div class="inf">#25 15x15</div></div>
+<div class="sp"><img src="img_12/auto_005.png"><div class="inf">#27 15x15</div></div>
+<div class="sp"><img src="img_12/auto_006.png"><div class="inf">#29 15x15</div></div>
+<div class="sp"><img src="img_12/auto_007.png"><div class="inf">#30 15x15</div></div>
+<div class="sp"><img src="img_12/auto_008.png"><div class="inf">#36 15x15</div></div>
+<div class="sp"><img src="img_12/auto_009.png"><div class="inf">#39 15x15</div></div>
+<div class="sp"><img src="img_12/auto_010.png"><div class="inf">#42 15x15</div></div>
+<div class="sp"><img src="img_12/auto_011.png"><div class="inf">#46 15x15</div></div>
+</div>
+</div>
+</div>
+</body></html>
