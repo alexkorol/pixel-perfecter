@@ -507,12 +507,15 @@ class TestCrawlDescriptions:
         from pipeline.crawl_descriptions import parse_all_descriptions
 
         crawl_dir = self._create_description_files(tmp_path)
-        descriptions = parse_all_descriptions(crawl_dir)
+        db = parse_all_descriptions(crawl_dir)
 
-        assert len(descriptions) >= 7
-        assert "long sword" in descriptions
-        assert "shadow demon" in descriptions
-        assert "singing sword" in descriptions
+        assert len(db.all) >= 7
+        assert "long sword" in db.all
+        assert "shadow demon" in db.all
+        assert "singing sword" in db.all
+        # check category-aware subsets exist
+        assert "items" in db.by_source
+        assert "monsters" in db.by_source
 
     def test_normalize_name(self):
         from pipeline.crawl_descriptions import _normalize_name

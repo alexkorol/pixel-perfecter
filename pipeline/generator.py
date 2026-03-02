@@ -365,10 +365,172 @@ def generate_image(
         return _generate_openai(prompt, config)
     elif backend == "replicate":
         return _generate_replicate(prompt, config)
+    elif backend == "openrouter":
+        return _generate_openrouter(prompt, config, sprite_img)
     elif backend == "manual":
         return []  # manual mode: images are pre-placed
     else:
         raise ValueError(f"Unknown generator backend: {backend}")
+
+
+# ---------------------------------------------------------------------------
+# Backend: OpenRouter (multimodal models like Gemini Flash Image Preview)
+# ---------------------------------------------------------------------------
+
+def _generate_openrouter(
+    prompt: str,
+    config: GenerationConfig,
+    sprite_img: Optional[np.ndarray] = None,
+) -> List[np.ndarray]:
+    """Generate images using OpenRouter API with a multimodal model.
+
+    Uses models like google/gemini-2.5-flash-image that can generate
+    images via the chat completions API. Uses raw HTTP to access the
+    'images' response field that the OpenAI SDK strips out.
+    """
+    import base64
+    import urllib.request
+    import urllib.error
+    from io import BytesIO
+
+    api_key = os.environ.get("OPENROUTER_API_KEY")
+    if not api_key:
+        raise ValueError("OPENROUTER_API_KEY not set")
+
+    model = config.model or "google/gemini-2.5-flash-image"
+
+    # Build the message content — sprite image is primary, text is secondary
+    content_parts = []
+
+    if sprite_img is not None:
+        if sprite_img.shape[2] == 4:
+            pil = Image.fromarray(sprite_img, "RGBA")
+        else:
+            pil = Image.fromarray(sprite_img, "RGB")
+        # Upscale tiny sprites so the model can see details clearly
+        w, h = pil.size
+        if max(w, h) < 256:
+            scale = max(1, 256 // max(w, h))
+            pil = pil.resize((w * scale, h * scale), Image.NEAREST)
+        buf = BytesIO()
+        pil.save(buf, format="PNG")
+        b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+        content_parts.append({
+            "type": "image_url",
+            "image_url": {"url": f"data:image/png;base64,{b64}"},
+        })
+
+    # Proven prompt for generating photorealistic counterparts from pixel art.
+    # The sprite image is the primary input — this text steers the output style.
+    gen_prompt = (
+        "You are looking at a small pixel art sprite from a 2D video game. "
+        "Your task is to imagine what real-world object, creature, or character "
+        "this sprite is meant to represent, then create a completely new, fully "
+        "photorealistic photograph-style image of that same subject.\n\n"
+        "CRITICAL RULES:\n"
+        "- The output must be a COMPLETELY smooth, high-resolution image with NO "
+        "pixel grid, NO checkerboard patterns, NO jagged edges, NO mosaic textures\n"
+        "- Do NOT blend pixel art with realistic rendering. Do NOT preserve any "
+        "pixel-level detail from the input. The output should look like a real "
+        "photograph, not like an upscaled sprite\n"
+        "- Match the subject matter exactly: same object/creature type, same pose, "
+        "same color scheme, same equipment/accessories, same facing direction\n"
+        "- Use a plain solid neutral background\n"
+        "- Show the full subject, nothing cropped\n"
+        "- The output image MUST be square\n\n"
+        "Think of it this way: a pixel artist looked at a real photograph and "
+        "created this sprite from it. You are reconstructing that original photograph."
+    )
+    content_parts.append({"type": "text", "text": gen_prompt})
+
+    results = []
+    for _ in range(config.num_images):
+        try:
+            # Use raw HTTP to get full response including 'images' field
+            payload = json.dumps({
+                "model": model,
+                "max_tokens": 4096,
+                "messages": [{"role": "user", "content": content_parts}],
+            }).encode("utf-8")
+
+            req = urllib.request.Request(
+                "https://openrouter.ai/api/v1/chat/completions",
+                data=payload,
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {api_key}",
+                },
+            )
+
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                raw_data = json.loads(resp.read().decode("utf-8"))
+
+            msg = raw_data.get("choices", [{}])[0].get("message", {})
+
+            # Method 1: 'images' field (gemini-2.5-flash-image, etc.)
+            for img_entry in msg.get("images", []):
+                if isinstance(img_entry, dict):
+                    url = img_entry.get("image_url", {}).get("url", "")
+                elif isinstance(img_entry, str):
+                    url = img_entry
+                else:
+                    continue
+                if url.startswith("data:"):
+                    b64_data = url.split(",", 1)[1]
+                    img_bytes = base64.b64decode(b64_data)
+                    pil_img = Image.open(BytesIO(img_bytes)).convert("RGB")
+                    results.append(np.array(pil_img))
+
+            # Method 2: inline images in content
+            if not results:
+                content = msg.get("content", "")
+                if isinstance(content, list):
+                    for part in content:
+                        if isinstance(part, dict) and part.get("type") == "image_url":
+                            url = part["image_url"]["url"]
+                            if url.startswith("data:"):
+                                b64_data = url.split(",", 1)[1]
+                                img_bytes = base64.b64decode(b64_data)
+                                pil_img = Image.open(BytesIO(img_bytes)).convert("RGB")
+                                results.append(np.array(pil_img))
+                elif isinstance(content, str) and content:
+                    import re
+                    b64_matches = re.findall(
+                        r'data:image/(?:png|jpeg|webp);base64,([A-Za-z0-9+/=]+)',
+                        content,
+                    )
+                    for b64_data in b64_matches:
+                        img_bytes = base64.b64decode(b64_data)
+                        pil_img = Image.open(BytesIO(img_bytes)).convert("RGB")
+                        results.append(np.array(pil_img))
+
+            if not results:
+                logger.warning(
+                    "OpenRouter response did not contain image data. "
+                    "Content preview: %.200s",
+                    str(msg.get("content", ""))[:200],
+                )
+        except Exception as e:
+            logger.error("OpenRouter generation error: %s", e)
+            raise
+
+    # Post-process: force square and resize to target dimensions
+    target_size = config.width
+    processed = []
+    for img_arr in results:
+        pil_out = Image.fromarray(img_arr, "RGB")
+        w, h = pil_out.size
+        if w != h:
+            # Center-crop to square
+            side = min(w, h)
+            left = (w - side) // 2
+            top = (h - side) // 2
+            pil_out = pil_out.crop((left, top, left + side, top + side))
+        if pil_out.size[0] != target_size:
+            pil_out = pil_out.resize((target_size, target_size), Image.LANCZOS)
+        processed.append(np.array(pil_out))
+
+    return processed
 
 
 # ---------------------------------------------------------------------------

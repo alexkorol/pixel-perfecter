@@ -23,6 +23,7 @@ MANIFEST
 
 # Virtual Environment
 venv/
+.venv/
 env/
 ENV/
 
@@ -44,3 +45,13 @@ ml/runs/
 # Pipeline data (large, generated)
 data/
 test_output/
+
+# Artist reference images (copyright)
+input/artist-ref/
+
+# Environment files (API keys)
+.env
+.env.*
+
+# Claude Code settings (may contain API keys)
+.claude/

@@ -261,7 +261,8 @@ def ingest_dcss(
                 _tile_path_to_search_names,
                 _normalize_name,
             )
-            game_descriptions = parse_all_descriptions(crawl_dir)
+            desc_db = parse_all_descriptions(crawl_dir)
+            game_descriptions = desc_db.all
             logger.info("Loaded %d game descriptions from crawl source", len(game_descriptions))
         except Exception as e:
             logger.warning("Could not load game descriptions: %s", e)
@@ -360,7 +361,7 @@ def ingest_dcss(
             "sprite_path": str(out_1x),
             "sprite_upscaled_path": str(out_up),
             "source_image": str(png_path),
-            "dcss_path": str(rel_path),
+            "dcss_path": str(rel_path).replace("\\", "/"),
             "tags": tags.to_dict(),
             "caption_short": caption.short_description,
             "caption_detailed": caption.detailed_description,

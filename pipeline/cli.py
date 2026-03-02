@@ -21,8 +21,8 @@ Each subcommand corresponds to a pipeline stage:
   generate          — Generate high-res counterpart images from prompts
   package           — Assemble final training dataset from completed pairs
   train             — Train a pixelization model (LoRA) on the packaged dataset
-  crawl-descriptions — Datamine DCSS tiles + descriptions → curation gallery
-  run               — Run extract → clean → tag → caption → prompts in sequence
+  crawl-descriptions — Datamine DCSS tiles + descriptions -> curation gallery
+  run               — Run extract -> clean -> tag -> caption -> prompts in sequence
 """
 
 import argparse
@@ -111,7 +111,7 @@ def cmd_extract(args):
         total_deduped += (before - after)
 
         logger.info(
-            "  → %d sprites extracted, %d duplicates removed, %d saved",
+            "  -> %d sprites extracted, %d duplicates removed, %d saved",
             before, before - after, len(saved),
         )
 
@@ -142,7 +142,7 @@ def cmd_clean(args):
         max_core_diff=args.max_core_diff,
     )
 
-    logger.info("Cleaned %d sprites → %s", len(results), output_dir)
+    logger.info("Cleaned %d sprites -> %s", len(results), output_dir)
     return 0
 
 
@@ -167,7 +167,7 @@ def cmd_tag(args):
             entry = {"filename": filename, **tags.to_dict()}
             f.write(json.dumps(entry) + "\n")
 
-    logger.info("Tagged %d sprites → %s", len(results), output_path)
+    logger.info("Tagged %d sprites -> %s", len(results), output_path)
 
     # also print summary
     from collections import Counter
@@ -226,7 +226,7 @@ def cmd_caption(args):
         rate_limit=args.rate_limit,
     )
 
-    logger.info("Captioned %d sprites → %s", len(results), cache_dir)
+    logger.info("Captioned %d sprites -> %s", len(results), cache_dir)
     for name, caption in results[:5]:
         logger.info("  %s: %s", name, caption.short_description)
     if len(results) > 5:
@@ -269,7 +269,7 @@ def cmd_generate(args):
         skip_existing=not args.regenerate,
     )
 
-    logger.info("Generated %d images → %s", count, output_dir)
+    logger.info("Generated %d images -> %s", count, output_dir)
     return 0
 
 
@@ -352,7 +352,7 @@ def cmd_crawl_descriptions(args):
 # ---- Subcommand: run (full pipeline) ----
 
 def cmd_run(args):
-    """Run the full pipeline: extract → clean → tag → caption → prompts."""
+    """Run the full pipeline: extract -> clean -> tag -> caption -> prompts."""
     from pipeline.sheet_splitter import extract_sprites, save_sprites, deduplicate_sprites
     from pipeline.cleaner import clean_sprite
     from pipeline.tagger import auto_tag
@@ -593,7 +593,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_caption = sub.add_parser("caption", help="Describe sprites using a VLM")
     p_caption.add_argument("inputs", nargs="+", help="Directory of sprite images")
     p_caption.add_argument("--backend", default="claude",
-                           choices=["claude", "openai", "local", "manual"],
+                           choices=["claude", "openai", "openrouter", "local", "manual"],
                            help="VLM backend (default: claude)")
     p_caption.add_argument("--model", default=None,
                            help="Override model name for the backend")
@@ -608,7 +608,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_gen.add_argument("inputs", nargs="+", help="Manifest JSONL path")
     p_gen.add_argument("-o", "--output", required=True, help="Output directory")
     p_gen.add_argument("--backend", default="comfyui",
-                       choices=["comfyui", "a1111", "openai", "replicate", "manual"],
+                       choices=["comfyui", "a1111", "openai", "openrouter", "replicate", "manual"],
                        help="Generation backend (default: comfyui)")
     p_gen.add_argument("--model", default=None,
                        help="Override model name/checkpoint")
@@ -676,7 +676,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     # -- run (full pipeline) --
     p_run = sub.add_parser("run",
-                           help="Run full pipeline: extract → clean → tag → caption → prompts")
+                           help="Run full pipeline: extract -> clean -> tag -> caption -> prompts")
     p_run.add_argument("inputs", nargs="+", help="Image files or directories")
     p_run.add_argument("-o", "--output", default=None,
                        help="Base output directory (default: data/)")
@@ -687,7 +687,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument("--styles", default=None,
                        help="Comma-separated generation styles")
     p_run.add_argument("--captioner-backend", default=None,
-                       choices=["claude", "openai", "local", "manual", "none"],
+                       choices=["claude", "openai", "openrouter", "local", "manual", "none"],
                        help="VLM captioning backend (default: none/placeholder)")
     p_run.add_argument("--no-hough", action="store_true")
     p_run.add_argument("--recursive", "-r", action="store_true")

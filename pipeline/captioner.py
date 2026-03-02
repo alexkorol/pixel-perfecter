@@ -223,6 +223,72 @@ def _caption_openai(
 
 
 # ---------------------------------------------------------------------------
+# Backend: OpenRouter (OpenAI-compatible, many models)
+# ---------------------------------------------------------------------------
+
+def _caption_openrouter(
+    img: np.ndarray,
+    model: str = "google/gemini-3.1-flash-image-preview",
+    max_retries: int = 3,
+) -> SpriteCaption:
+    """Caption a sprite using the OpenRouter API (OpenAI-compatible)."""
+    try:
+        import openai
+    except ImportError:
+        raise ImportError(
+            "openai package required for OpenRouter captioning. "
+            "Install with: pip install openai"
+        )
+
+    api_key = os.environ.get("OPENROUTER_API_KEY")
+    if not api_key:
+        raise ValueError("OPENROUTER_API_KEY environment variable not set")
+
+    client = openai.OpenAI(
+        api_key=api_key,
+        base_url="https://openrouter.ai/api/v1",
+    )
+    b64 = _image_to_base64(img)
+
+    for attempt in range(max_retries):
+        try:
+            response = client.chat.completions.create(
+                model=model,
+                max_tokens=512,
+                messages=[{
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/png;base64,{b64}",
+                            },
+                        },
+                        {
+                            "type": "text",
+                            "text": CAPTION_SYSTEM_PROMPT,
+                        },
+                    ],
+                }],
+            )
+            text = response.choices[0].message.content
+            short, detailed = _parse_caption_json(text)
+            return SpriteCaption(
+                short_description=short,
+                detailed_description=detailed,
+                source="openrouter",
+            )
+        except Exception as e:
+            if attempt < max_retries - 1:
+                wait = 2 ** (attempt + 1)
+                logger.warning("OpenRouter API error (attempt %d): %s, retrying in %ds",
+                             attempt + 1, e, wait)
+                time.sleep(wait)
+            else:
+                raise
+
+
+# ---------------------------------------------------------------------------
 # Backend: Local (Ollama)
 # ---------------------------------------------------------------------------
 
@@ -340,6 +406,9 @@ def caption_sprite(
         caption = _caption_claude(img, model=model or "claude-sonnet-4-20250514")
     elif backend == "openai":
         caption = _caption_openai(img, model=model or "gpt-4o")
+    elif backend == "openrouter":
+        caption = _caption_openrouter(
+            img, model=model or "google/gemini-3.1-flash-image-preview")
     elif backend == "local":
         caption = _caption_local(img, model=model or "llava")
     else:

@@ -136,15 +136,47 @@ def parse_description_file(filepath: Path) -> List[GameDescription]:
     return entries
 
 
-def parse_all_descriptions(crawl_dir: Path) -> Dict[str, GameDescription]:
-    """Parse all description files and return a name → description mapping.
+@dataclass
+class DescriptionDatabase:
+    """All parsed descriptions, organized for category-aware lookup."""
+    all: Dict[str, GameDescription] = field(default_factory=dict)
+    by_source: Dict[str, Dict[str, GameDescription]] = field(default_factory=dict)
+
+    def get_for_tile_category(self, tile_category: str) -> Dict[str, GameDescription]:
+        """Return the subset of descriptions most relevant to a tile category.
+
+        Tile categories map to description sources:
+          item → items + unrand (items first, artifacts second)
+          mon  → monsters
+          dngn → features
+          effect → spells
+          *    → all (fallback)
+        """
+        source_map = {
+            "item": ["items", "unrand"],
+            "mon": ["monsters"],
+            "dngn": ["features"],
+            "effect": ["spells"],
+        }
+        sources = source_map.get(tile_category)
+        if not sources:
+            return self.all
+
+        merged = {}
+        for src in sources:
+            merged.update(self.by_source.get(src, {}))
+        return merged
+
+
+def parse_all_descriptions(crawl_dir: Path) -> DescriptionDatabase:
+    """Parse all description files and return a DescriptionDatabase.
 
     Looks in crawl-ref/source/dat/descript/ for:
-      - items.txt      → items (weapons, armour, potions, scrolls, etc.)
-      - monsters.txt   → monsters
-      - unrand.txt     → unique artifacts
-      - spells.txt     → spells (for effect tiles)
-      - features.txt   → dungeon features (for dngn tiles)
+      - items.txt      -> items (weapons, armour, potions, scrolls, etc.)
+      - monsters.txt   -> monsters
+      - unrand.txt     -> unique artifacts
+      - spells.txt     -> spells (for effect tiles)
+      - features.txt   -> dungeon features (for dngn tiles)
     """
     descript_dir = crawl_dir / "crawl-ref" / "source" / "dat" / "descript"
     if not descript_dir.exists():
@@ -162,7 +194,7 @@ def parse_all_descriptions(crawl_dir: Path) -> Dict[str, GameDescription]:
         "spells.txt", "features.txt",
     ]
 
-    all_descriptions: Dict[str, GameDescription] = {}
+    db = DescriptionDatabase()
 
     for filename in files_to_parse:
         filepath = descript_dir / filename
@@ -175,6 +207,7 @@ def parse_all_descriptions(crawl_dir: Path) -> Dict[str, GameDescription]:
 
         # categorize based on source file
         category = filename.replace(".txt", "")
+        db.by_source.setdefault(category, {})
 
         for entry in entries:
             entry.category = category
@@ -183,10 +216,11 @@ def parse_all_descriptions(crawl_dir: Path) -> Dict[str, GameDescription]:
 
             # normalize the key for lookup
             key = _normalize_name(entry.name)
-            all_descriptions[key] = entry
+            db.all[key] = entry
+            db.by_source[category][key] = entry
 
-    logger.info("Total descriptions parsed: %d", len(all_descriptions))
-    return all_descriptions
+    logger.info("Total descriptions parsed: %d", len(db.all))
+    return db
 
 
 # ---------------------------------------------------------------------------
@@ -265,10 +299,20 @@ def _tile_path_to_search_names(tile_path: str) -> List[str]:
     if "armor" in name:
         candidates.append(name.replace("armor", "armour"))
 
-    # handle "scales" vs "dragon scales"
-    if "dragon" in name and "scale" not in name:
-        candidates.append(f"{name} scales")
-        candidates.append(f"{name} dragon scales")
+    # handle dragon armour/scales/scale_mail variants
+    # e.g. "ice dragon armour" → also try "ice dragon scales", "ice dragon hide"
+    # e.g. "blue dragon scale mail" → also try "blue dragon scales"
+    if "dragon" in name:
+        if "scale mail" in name:
+            base = name.replace("scale mail", "").strip()
+            candidates.append(f"{base} scales")
+            candidates.append(f"{base} hide")
+        elif "armour" in name or "armor" in name:
+            base = name.replace("armour", "").replace("armor", "").strip()
+            candidates.append(f"{base} scales")
+            candidates.append(f"{base} hide")
+        if "scale" not in name and "hide" not in name:
+            candidates.append(f"{name} scales")
 
     return candidates
 
@@ -291,12 +335,94 @@ class TileMatch:
     keep: Optional[bool] = None     # user curation decision
 
 
+def _is_word_boundary_prefix(shorter: str, longer: str) -> bool:
+    """Check if shorter is a word-boundary-aligned prefix of longer.
+
+    'light' is NOT a prefix of 'lightning' (mid-word).
+    'wand of light' IS a prefix of 'wand of light beam' (word boundary).
+    'shadow' IS a prefix of 'shadow demon' (word boundary).
+    """
+    if not longer.startswith(shorter):
+        return False
+    # must match at a word boundary: next char must be space or end of string
+    if len(longer) == len(shorter):
+        return True
+    return longer[len(shorter)] == " "
+
+
+def _match_against(
+    search_names: List[str],
+    desc_dict: Dict[str, GameDescription],
+) -> Tuple[Optional[GameDescription], float, str]:
+    """Try to match candidate names against a description dictionary.
+
+    Returns (best_match, best_score, match_type) or (None, 0, "").
+    Tries exact -> prefix -> fuzzy in order.
+    """
+    best_match = None
+    best_score = 0.0
+    best_type = ""
+
+    for candidate in search_names:
+        norm = _normalize_name(candidate)
+
+        # exact match
+        if norm in desc_dict:
+            return desc_dict[norm], 1.0, "exact"
+
+        # prefix match — must be on a word boundary
+        for key, desc in desc_dict.items():
+            if _is_word_boundary_prefix(norm, key) and len(norm) > 3:
+                score = len(norm) / len(key)
+                if score > best_score and score > 0.6:
+                    best_match = desc
+                    best_score = score
+                    best_type = "prefix"
+
+            if _is_word_boundary_prefix(key, norm) and len(key) > 3:
+                score = len(key) / len(norm)
+                if score > best_score and score > 0.6:
+                    best_match = desc
+                    best_score = score
+                    best_type = "prefix"
+
+    # fuzzy match as last resort
+    if best_score < 0.6:
+        primary_name = _normalize_name(search_names[0])
+        primary_tokens = set(primary_name.split()) - _STOP_WORDS
+        for key, desc in desc_dict.items():
+            score = _fuzzy_score(primary_name, key)
+            if score <= best_score or score <= 0.65:
+                continue
+
+            # coverage check: when the candidate is more specific than
+            # the matched key, penalize. "blue dragon scale mail" matching
+            # "scale mail" has only 50% of candidate tokens covered — the
+            # important qualifiers are dropped. Require >50% coverage.
+            if primary_tokens:
+                key_tokens = set(key.split()) - _STOP_WORDS
+                overlap = primary_tokens & key_tokens
+                coverage = len(overlap) / len(primary_tokens)
+                if coverage < 0.51:
+                    continue
+
+            best_match = desc
+            best_score = score
+            best_type = "fuzzy"
+
+    return best_match, best_score, best_type
+
+
 def match_tiles_to_descriptions(
     tiles_dir: Path,
-    descriptions: Dict[str, GameDescription],
+    descriptions: DescriptionDatabase,
     categories: Optional[List[str]] = None,
 ) -> List[TileMatch]:
     """Match tile files to game descriptions.
+
+    Uses category-aware matching: item tiles are matched against items.txt
+    + unrand.txt first, monster tiles against monsters.txt, etc. Falls back
+    to all descriptions only if the primary category yields no match.
 
     Returns a list of TileMatch objects sorted by category and name.
     """
@@ -304,12 +430,14 @@ def match_tiles_to_descriptions(
 
     matches = []
     unmatched = []
+    cross_category_fallbacks = 0
 
     all_pngs = sorted(tiles_dir.rglob("*.png"))
     logger.info("Found %d PNG tiles to match", len(all_pngs))
 
     for png_path in all_pngs:
-        rel_path = str(png_path.relative_to(tiles_dir))
+        # normalize to forward slashes for cross-platform consistency
+        rel_path = str(png_path.relative_to(tiles_dir)).replace("\\", "/")
         parts = Path(rel_path).parts
 
         # filter by category
@@ -340,48 +468,21 @@ def match_tiles_to_descriptions(
         if tile_w < 16 or tile_h < 16 or tile_w > 128 or tile_h > 128:
             continue
 
-        # try to match
+        # generate candidate names
         search_names = _tile_path_to_search_names(rel_path)
-        best_match = None
-        best_score = 0.0
-        best_type = ""
 
-        for candidate in search_names:
-            norm = _normalize_name(candidate)
+        # CATEGORY-AWARE: first try the primary description subset
+        primary_descs = descriptions.get_for_tile_category(top_cat)
+        best_match, best_score, best_type = _match_against(search_names, primary_descs)
 
-            # exact match
-            if norm in descriptions:
-                best_match = descriptions[norm]
-                best_score = 1.0
-                best_type = "exact"
-                break
-
-            # try prefix match (description name starts with our candidate)
-            for key, desc in descriptions.items():
-                if key.startswith(norm) and len(norm) > 3:
-                    score = len(norm) / len(key)
-                    if score > best_score and score > 0.6:
-                        best_match = desc
-                        best_score = score
-                        best_type = "prefix"
-
-                # also try if our candidate starts with the description name
-                if norm.startswith(key) and len(key) > 3:
-                    score = len(key) / len(norm)
-                    if score > best_score and score > 0.6:
-                        best_match = desc
-                        best_score = score
-                        best_type = "prefix"
-
-        # fuzzy match as last resort
-        if best_score < 0.6:
-            primary_name = _normalize_name(search_names[0])
-            for key, desc in descriptions.items():
-                score = _fuzzy_score(primary_name, key)
-                if score > best_score and score > 0.65:
-                    best_match = desc
-                    best_score = score
-                    best_type = "fuzzy"
+        # If primary category failed, fall back to all descriptions
+        if best_match is None and primary_descs is not descriptions.all:
+            best_match, best_score, best_type = _match_against(
+                search_names, descriptions.all,
+            )
+            if best_match:
+                cross_category_fallbacks += 1
+                best_type = f"fallback:{best_type}"
 
         if best_match:
             matches.append(TileMatch(
@@ -402,6 +503,8 @@ def match_tiles_to_descriptions(
             unmatched.append(rel_path)
 
     logger.info("Matched: %d tiles, Unmatched: %d tiles", len(matches), len(unmatched))
+    if cross_category_fallbacks:
+        logger.info("  (of which %d used cross-category fallback)", cross_category_fallbacks)
     if unmatched and len(unmatched) <= 20:
         for u in unmatched:
             logger.debug("  Unmatched: %s", u)
@@ -414,13 +517,25 @@ def match_tiles_to_descriptions(
     return matches
 
 
+_STOP_WORDS = frozenset({
+    "a", "an", "the", "of", "some", "and", "or", "in", "on", "to",
+    "with", "is", "it", "its", "this", "that", "for", "by", "from",
+})
+
+
 def _fuzzy_score(a: str, b: str) -> float:
-    """Simple token-overlap fuzzy matching score."""
+    """Token-overlap fuzzy matching score, ignoring stop words.
+
+    Uses Dice coefficient on content words only.
+    Stop words like 'of', 'the', 'some' are excluded so they don't
+    inflate the score (e.g. 'book of the dead' vs 'book of the fortress'
+    would otherwise score 0.75 due to shared stop words).
+    """
     if not a or not b:
         return 0.0
 
-    tokens_a = set(a.split())
-    tokens_b = set(b.split())
+    tokens_a = set(a.split()) - _STOP_WORDS
+    tokens_b = set(b.split()) - _STOP_WORDS
 
     if not tokens_a or not tokens_b:
         return 0.0
@@ -429,7 +544,7 @@ def _fuzzy_score(a: str, b: str) -> float:
     if not overlap:
         return 0.0
 
-    # Dice coefficient
+    # Dice coefficient on content words only
     return 2.0 * len(overlap) / (len(tokens_a) + len(tokens_b))
 
 
@@ -498,18 +613,22 @@ def generate_curation_gallery(
         html_parts.append('<div class="tile-grid">')
 
         for m in group:
-            tile_id = m.tile_path.replace("/", "__").replace(".", "_")
+            tile_id = m.tile_path.replace("\\", "__").replace("/", "__").replace(".", "_")
 
             if embed_images:
                 img_src = _image_to_data_uri(m.tile_abs_path)
             else:
                 img_src = m.tile_abs_path
 
-            match_badge = {
-                "exact": '<span class="badge exact">exact</span>',
-                "prefix": '<span class="badge prefix">prefix</span>',
-                "fuzzy": '<span class="badge fuzzy">fuzzy</span>',
-            }.get(m.match_type, "")
+            if m.match_type.startswith("fallback:"):
+                inner = m.match_type.split(":", 1)[1]
+                match_badge = f'<span class="badge fallback">xcat:{inner}</span>'
+            else:
+                match_badge = {
+                    "exact": '<span class="badge exact">exact</span>',
+                    "prefix": '<span class="badge prefix">prefix</span>',
+                    "fuzzy": '<span class="badge fuzzy">fuzzy</span>',
+                }.get(m.match_type, "")
 
             variant_badge = f'<span class="badge variant">v{m.variant_num}</span>' if m.is_variant else ""
 
@@ -629,6 +748,7 @@ h2.group-header {
 .badge.exact { background: #27ae60; color: #fff; }
 .badge.prefix { background: #f39c12; color: #000; }
 .badge.fuzzy { background: #e74c3c; color: #fff; }
+.badge.fallback { background: #9b59b6; color: #fff; }
 .badge.variant { background: #3498db; color: #fff; }
 </style>
 </head>
